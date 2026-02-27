@@ -1,0 +1,21 @@
+alert_levels:
+  act_now:
+    min_groups: 3
+    time_window_hours: 1
+    min_onchain_score: 20
+    cross_platform: required
+    notify: "sound_and_pin"
+
+  interesting:
+    min_groups: 2
+    time_window_hours: 2
+    min_onchain_score: 0
+    cross_platform: preferred
+    notify: "normal"
+
+  watch:
+    min_groups: 2
+    time_window_hours: 6
+    min_onchain_score: -20
+    cross_platform: optional
+    notify: "silent"

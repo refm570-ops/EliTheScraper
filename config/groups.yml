@@ -1,0 +1,25 @@
+groups:
+  - id: -1001234567890
+    name: "Alpha Calls"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567891
+    name: "Degen Chat"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567892
+    name: "Solana Gems"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567893
+    name: "CT Insiders"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567894
+    name: "Memecoin Hunters"
+    category: "degen"
+    priority: medium

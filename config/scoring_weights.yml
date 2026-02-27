@@ -1,0 +1,60 @@
+token_age:
+  critical_young:
+    max_days: 1
+    score: -30
+    note: "Extremely high rug risk"
+  young:
+    max_days: 3
+    score: -10
+    note: "High risk but early alpha window"
+  moderate:
+    max_days: 14
+    score: 10
+    note: "Survived initial period"
+  established:
+    min_days: 14
+    score: 5
+    note: "Less likely to rug, less upside"
+
+holder_distribution:
+  whale_dominated:
+    top10_pct_above: 60
+    score: -25
+  concentrated:
+    top10_pct_above: 40
+    score: -10
+  healthy:
+    top10_pct_below: 40
+    score: 15
+  distributed:
+    top10_pct_below: 20
+    score: 20
+
+liquidity:
+  danger:
+    max_usd: 50000
+    score: -20
+    note: "Can't exit"
+  thin:
+    max_usd: 200000
+    score: -5
+  adequate:
+    max_usd: 1000000
+    score: 10
+  deep:
+    min_usd: 1000000
+    score: 15
+
+volume_trend:
+  declining:
+    change_24h_below: -30
+    score: -15
+  flat:
+    change_24h_range: [-30, 30]
+    score: 0
+  growing:
+    change_24h_above: 30
+    score: 15
+  exploding:
+    change_24h_above: 100
+    score: 20

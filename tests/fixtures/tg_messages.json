@@ -1,0 +1,98 @@
+[
+  {
+    "source": "telegram",
+    "group_id": -1001234567890,
+    "group_name": "Alpha Calls",
+    "message_id": 1001,
+    "sender_id": 111,
+    "sender_name": "whale_watcher",
+    "text": "just aped $MONKE, chart looks clean, 2M mcap",
+    "timestamp": "2025-02-27T14:30:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567891,
+    "group_name": "Degen Chat",
+    "message_id": 1002,
+    "sender_id": 222,
+    "sender_name": "degen_dave",
+    "text": "gm everyone how we doing",
+    "timestamp": "2025-02-27T14:31:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567890,
+    "group_name": "Alpha Calls",
+    "message_id": 1003,
+    "sender_id": 333,
+    "sender_name": "crypto_analyst",
+    "text": "BTC looking weak, alts might dump. Be careful out there",
+    "timestamp": "2025-02-27T14:32:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567892,
+    "group_name": "Solana Gems",
+    "message_id": 1004,
+    "sender_id": 444,
+    "sender_name": "sol_maxi",
+    "text": "full send on $BONK, loaded a bag at 0.00001. this is the one ser",
+    "timestamp": "2025-02-27T14:33:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567893,
+    "group_name": "CT Insiders",
+    "message_id": 1005,
+    "sender_id": 555,
+    "sender_name": "insider_alpha",
+    "text": "watching 7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr, volume picking up nicely",
+    "timestamp": "2025-02-27T14:34:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567890,
+    "group_name": "Alpha Calls",
+    "message_id": 1006,
+    "sender_id": 666,
+    "sender_name": "random_guy",
+    "text": "ngmi if you're not in memes rn lol",
+    "timestamp": "2025-02-27T14:35:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567891,
+    "group_name": "Degen Chat",
+    "message_id": 1007,
+    "sender_id": 777,
+    "sender_name": "rug_reporter",
+    "text": "$PEPE got rugged hard, dev pulled all liquidity. stay away",
+    "timestamp": "2025-02-27T14:36:00Z",
+    "has_media": false,
+    "reply_to": null
+  },
+  {
+    "source": "telegram",
+    "group_id": -1001234567892,
+    "group_name": "Solana Gems",
+    "message_id": 1008,
+    "sender_id": 888,
+    "sender_name": "newbie",
+    "text": "someone in another group mentioned $WIF might pump, anyone know anything?",
+    "timestamp": "2025-02-27T14:37:00Z",
+    "has_media": false,
+    "reply_to": null
+  }
+]
