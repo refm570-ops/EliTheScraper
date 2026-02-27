@@ -1,2 +1,9 @@
 # X/Twitter accounts to monitor (Phase 3)
+# Add accounts with: username, category, priority
+#
+# Example:
+#   - username: CryptoAlpha
+#     category: calls
+#     priority: high
+#
 accounts: []

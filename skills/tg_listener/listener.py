@@ -16,7 +16,7 @@ from skills.tg_listener.session_manager import SessionManager
 
 log = structlog.get_logger()
 
-REDIS_KEY_RAW = "tg:messages:raw"
+REDIS_KEY_RAW = "signals:messages:raw"
 
 
 class TelegramListener:

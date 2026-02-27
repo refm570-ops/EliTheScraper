@@ -23,3 +23,129 @@ groups:
     name: "Memecoin Hunters"
     category: "degen"
     priority: medium
+
+  # Phase 2 additions — replace IDs with real group IDs
+  - id: -1001234567895
+    name: "Whale Alerts"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567896
+    name: "SOL Alpha"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567897
+    name: "ETH Plays"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567898
+    name: "Base Degen"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567899
+    name: "Pump Fun Calls"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567900
+    name: "DeFi Alpha"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567901
+    name: "NFT Flippers"
+    category: "degen"
+    priority: low
+
+  - id: -1001234567902
+    name: "Crypto VCs"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567903
+    name: "Arbitrum Gems"
+    category: "calls"
+    priority: medium
+
+  - id: -1001234567904
+    name: "Ordinals Chat"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567905
+    name: "Trading Signals"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567906
+    name: "Airdrop Hunters"
+    category: "degen"
+    priority: low
+
+  - id: -1001234567907
+    name: "Smart Money"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567908
+    name: "Micro Cap Gems"
+    category: "calls"
+    priority: high
+
+  - id: -1001234567909
+    name: "Raydium Plays"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567910
+    name: "Avax Alpha"
+    category: "calls"
+    priority: medium
+
+  - id: -1001234567911
+    name: "On-Chain Sleuths"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567912
+    name: "Futures Trading"
+    category: "calls"
+    priority: medium
+
+  - id: -1001234567913
+    name: "Sui Ecosystem"
+    category: "calls"
+    priority: medium
+
+  - id: -1001234567914
+    name: "Rug Watchers"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567915
+    name: "Presale Alerts"
+    category: "degen"
+    priority: low
+
+  - id: -1001234567916
+    name: "Meme Szn"
+    category: "degen"
+    priority: medium
+
+  - id: -1001234567917
+    name: "Institutional Flow"
+    category: "alpha"
+    priority: high
+
+  - id: -1001234567918
+    name: "Perp Traders"
+    category: "calls"
+    priority: medium
+
+  - id: -1001234567919
+    name: "Crypto News"
+    category: "alpha"
+    priority: low

@@ -1,0 +1,59 @@
+{
+  "pairs": [
+    {
+      "chainId": "solana",
+      "pairAddress": "ABC123pair",
+      "baseToken": {
+        "address": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+        "name": "MONKE",
+        "symbol": "MONKE"
+      },
+      "quoteToken": {
+        "address": "So11111111111111111111111111111111111111112",
+        "name": "Wrapped SOL",
+        "symbol": "SOL"
+      },
+      "priceUsd": "0.0045",
+      "marketCap": 4500000,
+      "fdv": 4500000,
+      "liquidity": {
+        "usd": 250000
+      },
+      "volume": {
+        "h24": 800000
+      },
+      "priceChange": {
+        "h24": 45.5
+      },
+      "pairCreatedAt": 1708000000000,
+      "url": "https://dexscreener.com/solana/ABC123pair"
+    },
+    {
+      "chainId": "solana",
+      "pairAddress": "DEF456pair",
+      "baseToken": {
+        "address": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+        "name": "MONKE",
+        "symbol": "MONKE"
+      },
+      "quoteToken": {
+        "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "name": "USD Coin",
+        "symbol": "USDC"
+      },
+      "priceUsd": "0.0044",
+      "marketCap": 4400000,
+      "liquidity": {
+        "usd": 50000
+      },
+      "volume": {
+        "h24": 100000
+      },
+      "priceChange": {
+        "h24": 40.0
+      },
+      "pairCreatedAt": 1708000000000,
+      "url": "https://dexscreener.com/solana/DEF456pair"
+    }
+  ]
+}

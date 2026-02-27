@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+import aiosqlite
+import structlog
+
+log = structlog.get_logger()
+
+SCHEMA = """\
+CREATE TABLE IF NOT EXISTS ticker_mentions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    intent TEXT NOT NULL,
+    conviction TEXT,
+    context TEXT,
+    group_id INTEGER,
+    group_name TEXT,
+    sender_id INTEGER,
+    message_id INTEGER,
+    raw_text TEXT,
+    source TEXT NOT NULL DEFAULT 'telegram',
+    created_at REAL NOT NULL  -- time.time() epoch
+);
+CREATE INDEX IF NOT EXISTS idx_ticker_mentions_ticker_time
+    ON ticker_mentions(ticker, created_at);
+CREATE INDEX IF NOT EXISTS idx_ticker_mentions_source_ticker_time
+    ON ticker_mentions(source, ticker, created_at);
+
+CREATE TABLE IF NOT EXISTS token_metadata_cache (
+    ticker TEXT PRIMARY KEY,
+    data TEXT NOT NULL,  -- JSON blob
+    fetched_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS alert_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT NOT NULL,
+    alert_level TEXT NOT NULL,
+    notify_mode TEXT NOT NULL,
+    score REAL,
+    summary TEXT,
+    metadata_available INTEGER NOT NULL DEFAULT 1,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_alert_log_ticker_time
+    ON alert_log(ticker, created_at);
+"""
+
+
+class Database:
+    """Async SQLite connection wrapper."""
+
+    def __init__(self, db_path: str = "signals.db") -> None:
+        self._db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        self._conn = await aiosqlite.connect(self._db_path)
+        self._conn.row_factory = aiosqlite.Row
+        await self._conn.executescript(SCHEMA)
+        await self._conn.commit()
+        await self._migrate(self._conn)
+        log.info("database.connected", path=self._db_path)
+
+    @staticmethod
+    async def _migrate(conn: aiosqlite.Connection) -> None:
+        """Run lightweight migrations for schema changes."""
+        cursor = await conn.execute("PRAGMA table_info(ticker_mentions)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        if "source" not in columns:
+            await conn.execute(
+                "ALTER TABLE ticker_mentions ADD COLUMN source TEXT NOT NULL DEFAULT 'telegram'"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ticker_mentions_source_ticker_time "
+                "ON ticker_mentions(source, ticker, created_at)"
+            )
+            await conn.commit()
+            log.info("database.migrated", added_column="source")
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            log.info("database.closed")
+
+    @property
+    def conn(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            raise RuntimeError("Database not connected. Call connect() first.")
+        return self._conn
