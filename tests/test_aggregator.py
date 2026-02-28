@@ -130,6 +130,72 @@ def test_level_act_now_blocked_by_suspicious(aggregator: SignalAggregator) -> No
     assert blocked == "cross_platform_required"
 
 
+# --- X sentiment score boost tests (Phase 4) ---
+
+
+def test_level_boosted_by_x_sentiment(aggregator: SignalAggregator) -> None:
+    """Test that positive X sentiment boosts total_score for tier evaluation."""
+    # Without X sentiment: score=15 with 2 groups → interesting
+    social = {"unique_groups": 2, "mention_count": 5}
+    score = {"total_score": 15}
+
+    level_before, _, _ = aggregator._determine_level(social, score)
+    assert level_before == "interesting"
+
+    # With X sentiment boost: 15 + 20 = 35 → still need 3 groups for act_now
+    x_sentiment = {"x_sentiment_score": 20, "x_data_available": True}
+    level_after, _, _ = aggregator._determine_level(social, score, x_sentiment_result=x_sentiment)
+    assert level_after == "interesting"  # Not enough groups for act_now
+
+
+def test_level_x_sentiment_helps_reach_act_now(aggregator: SignalAggregator) -> None:
+    """Test X sentiment can help reach act_now threshold when score was just below."""
+    # score=15 with 3 groups → doesn't meet act_now (needs 20)
+    social = {"unique_groups": 3, "mention_count": 8}
+    score = {"total_score": 15}
+
+    level_before, _, blocked = aggregator._determine_level(social, score)
+    assert level_before == "interesting"
+
+    # With X sentiment boost: 15 + 10 = 25 → meets act_now threshold (but still needs cross-ref)
+    x_sentiment = {"x_sentiment_score": 10, "x_data_available": True}
+    level_after, _, blocked = aggregator._determine_level(
+        social, score, x_sentiment_result=x_sentiment
+    )
+    assert level_after == "interesting"  # Downgraded due to missing cross-ref
+    assert blocked == "cross_platform_required"
+
+
+def test_level_x_bearish_penalty(aggregator: SignalAggregator) -> None:
+    """Test that negative X sentiment can drop score below threshold."""
+    # score=5 with 2 groups → interesting (min_onchain_score: 0)
+    social = {"unique_groups": 2, "mention_count": 3}
+    score = {"total_score": 5}
+
+    level_before, _, _ = aggregator._determine_level(social, score)
+    assert level_before == "interesting"
+
+    # With bearish X sentiment: 5 + (-15) = -10 → drops to watch
+    x_sentiment = {"x_sentiment_score": -15, "x_data_available": True}
+    level_after, _, _ = aggregator._determine_level(
+        social, score, x_sentiment_result=x_sentiment
+    )
+    assert level_after == "watch"
+
+
+def test_level_no_x_sentiment_no_change(aggregator: SignalAggregator) -> None:
+    """Test that None x_sentiment_result doesn't change behavior."""
+    social = {"unique_groups": 2, "mention_count": 5}
+    score = {"total_score": 5}
+
+    level_without, notify_without, _ = aggregator._determine_level(social, score)
+    level_with, notify_with, _ = aggregator._determine_level(
+        social, score, x_sentiment_result=None
+    )
+    assert level_without == level_with
+    assert notify_without == notify_with
+
+
 # --- _check_cross_platform tests ---
 
 

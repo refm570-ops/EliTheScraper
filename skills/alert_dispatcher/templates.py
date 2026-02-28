@@ -60,6 +60,7 @@ def format_phase2_alert(
     aggregator_result: dict[str, Any],
     metadata: dict[str, Any] | None = None,
     cross_ref_result: dict[str, Any] | None = None,
+    x_sentiment_result: dict[str, Any] | None = None,
 ) -> str:
     """Rich Phase 2+3 alert card with on-chain data, social metrics, scoring, and cross-platform."""
     header = _LEVEL_HEADERS.get(alert_level, alert_level.upper())
@@ -122,11 +123,43 @@ def format_phase2_alert(
         if suspicious:
             lines.append("  \u26a0\ufe0f Suspicious coordination detected")
 
+    # X Sentiment section (Phase 4)
+    if x_sentiment_result and x_sentiment_result.get("x_data_available"):
+        lines.append("")
+        x_score = x_sentiment_result.get("x_sentiment_score", 0)
+        x_bd = x_sentiment_result.get("x_score_breakdown", {})
+        direction = "bullish" if x_score > 0 else ("bearish" if x_score < 0 else "neutral")
+        lines.append(
+            f"<b>\U0001f4ca X Sentiment:</b> {x_score:+d} ({direction})"
+        )
+        parts = [f"{k}: {v:+d}" for k, v in x_bd.items()]
+        if parts:
+            lines.append(f"  {' | '.join(parts)}")
+        narrative = x_sentiment_result.get("key_narrative")
+        if narrative:
+            lines.append(f"  <i>{escape(narrative)}</i>")
+        eng_summary = x_sentiment_result.get("engagement_summary", {})
+        tweet_count = eng_summary.get("tweet_count", 0)
+        total_eng = (
+            eng_summary.get("total_likes", 0)
+            + eng_summary.get("total_retweets", 0)
+            + eng_summary.get("total_quotes", 0)
+        )
+        if tweet_count:
+            lines.append(f"  Buzz: {total_eng} engagements from {tweet_count} tweets")
+
     # Warning flags
     flags = score_result.get("flags", [])
     blocked_reason = aggregator_result.get("blocked_reason")
     if blocked_reason:
         flags = [*flags, blocked_reason]
+    # Add X bearish warning if applicable
+    if (
+        x_sentiment_result
+        and x_sentiment_result.get("x_data_available")
+        and x_sentiment_result.get("x_sentiment_score", 0) < -10
+    ):
+        flags = [*flags, "x_bearish_sentiment"]
     if flags:
         lines.append("")
         lines.append(f"\u26a0\ufe0f <b>Flags:</b> {', '.join(escape(f) for f in flags)}")

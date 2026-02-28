@@ -125,7 +125,9 @@ class XFeedPuller:
         params: dict[str, str] = {
             "exclude": "retweets,replies",
             "max_results": "10",
-            "tweet.fields": "created_at,text",
+            "tweet.fields": "created_at,text,public_metrics",
+            "expansions": "author_id",
+            "user.fields": "public_metrics",
         }
         if since_id:
             params["since_id"] = since_id
@@ -153,6 +155,9 @@ class XFeedPuller:
         if not tweets:
             return 0
 
+        # Parse author follower counts from expansions (may be absent on free tier)
+        author_followers = self._parse_author_followers(data)
+
         # Update since_id to the newest tweet (first in the list)
         newest_id = tweets[0]["id"]
         await self._redis.set(since_key, newest_id)
@@ -160,7 +165,11 @@ class XFeedPuller:
         # Convert tweets to shared message schema and push to Redis
         count = 0
         for tweet in tweets:
-            message = self._tweet_to_message(tweet, username, user_id)
+            author_id = tweet.get("author_id", user_id)
+            follower_count = author_followers.get(author_id)
+            message = self._tweet_to_message(
+                tweet, username, user_id, follower_count
+            )
             await self._redis.rpush(REDIS_KEY_RAW, json.dumps(message))
             count += 1
 
@@ -172,10 +181,33 @@ class XFeedPuller:
         return count
 
     @staticmethod
+    def _parse_author_followers(data: dict[str, Any]) -> dict[str, int]:
+        """Extract author_id → follower_count from API expansion includes."""
+        followers: dict[str, int] = {}
+        includes = data.get("includes", {})
+        for user in includes.get("users", []):
+            uid = user.get("id")
+            pm = user.get("public_metrics", {})
+            fc = pm.get("followers_count")
+            if uid and fc is not None:
+                followers[uid] = fc
+        return followers
+
+    @staticmethod
     def _tweet_to_message(
-        tweet: dict[str, Any], username: str, user_id: str
+        tweet: dict[str, Any],
+        username: str,
+        user_id: str,
+        author_followers: int | None = None,
     ) -> dict[str, Any]:
         """Convert an X API tweet object to the shared message schema."""
+        pm = tweet.get("public_metrics", {})
+        engagement = {
+            "likes": pm.get("like_count", 0),
+            "retweets": pm.get("retweet_count", 0),
+            "replies": pm.get("reply_count", 0),
+            "quotes": pm.get("quote_count", 0),
+        }
         return {
             "source": "twitter",
             "group_id": user_id,
@@ -189,6 +221,8 @@ class XFeedPuller:
             ),
             "has_media": False,
             "reply_to": None,
+            "engagement": engagement,
+            "author_followers": author_followers,
         }
 
     async def close(self) -> None:

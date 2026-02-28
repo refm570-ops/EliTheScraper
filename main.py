@@ -12,6 +12,7 @@ from agents.aggregator.agent import SignalAggregator
 from agents.classifier.agent import MessageClassifier
 from agents.cross_ref.agent import CrossReferenceAnalyst
 from agents.scorer.agent import FundamentalsScorer
+from agents.x_sentiment.agent import XSentimentAnalyzer
 from pipeline.buffer import MessageBuffer
 from pipeline.orchestrator import Orchestrator
 from pipeline.scheduler import PeriodicTask
@@ -114,6 +115,7 @@ async def main() -> None:
     scorer = FundamentalsScorer(api_key=api_key)
     aggregator = SignalAggregator(api_key=api_key)
     cross_ref = CrossReferenceAnalyst(api_key=api_key)
+    x_sentiment = XSentimentAnalyzer(api_key=api_key)
 
     # X/Twitter integration (opt-in)
     x_puller: XFeedPuller | None = None
@@ -149,6 +151,7 @@ async def main() -> None:
         scorer=scorer,
         aggregator=aggregator,
         cross_ref=cross_ref,
+        x_sentiment_analyzer=x_sentiment,
     )
 
     # Periodic cleanup task (every 6 hours)

@@ -76,6 +76,12 @@ class Database:
             )
             await conn.commit()
             log.info("database.migrated", added_column="source")
+        if "engagement_data" not in columns:
+            await conn.execute(
+                "ALTER TABLE ticker_mentions ADD COLUMN engagement_data TEXT"
+            )
+            await conn.commit()
+            log.info("database.migrated", added_column="engagement_data")
 
     async def close(self) -> None:
         if self._conn:

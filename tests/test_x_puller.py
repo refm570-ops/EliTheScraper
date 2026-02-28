@@ -40,6 +40,12 @@ def timeline_data():
 
 
 @pytest.fixture
+def timeline_data_with_metrics():
+    with open(FIXTURES / "x_timeline_with_metrics.json") as f:
+        return json.load(f)
+
+
+@pytest.fixture
 def puller(mock_redis):
     return XFeedPuller(
         bearer_token="test-token",
@@ -68,6 +74,56 @@ def test_tweet_to_message() -> None:
     assert msg["timestamp"] == "2024-03-15T10:30:00.000Z"
     assert msg["has_media"] is False
     assert msg["reply_to"] is None
+    # Engagement defaults to 0 when no public_metrics
+    assert msg["engagement"] == {"likes": 0, "retweets": 0, "replies": 0, "quotes": 0}
+    assert msg["author_followers"] is None
+
+
+def test_tweet_to_message_with_engagement() -> None:
+    """Test that engagement metrics are included in message schema."""
+    tweet = {
+        "id": "123456",
+        "text": "$MONKE looking bullish",
+        "created_at": "2024-03-15T10:30:00.000Z",
+        "public_metrics": {
+            "like_count": 150,
+            "retweet_count": 45,
+            "reply_count": 12,
+            "quote_count": 8,
+        },
+    }
+    msg = XFeedPuller._tweet_to_message(tweet, "cryptoalpha", "999", author_followers=50000)
+
+    assert msg["engagement"]["likes"] == 150
+    assert msg["engagement"]["retweets"] == 45
+    assert msg["engagement"]["replies"] == 12
+    assert msg["engagement"]["quotes"] == 8
+    assert msg["author_followers"] == 50000
+
+
+def test_parse_author_followers() -> None:
+    """Test parsing author follower counts from API expansion response."""
+    data = {
+        "data": [],
+        "includes": {
+            "users": [
+                {
+                    "id": "999",
+                    "username": "cryptoalpha",
+                    "public_metrics": {"followers_count": 50000},
+                }
+            ]
+        },
+    }
+    followers = XFeedPuller._parse_author_followers(data)
+    assert followers == {"999": 50000}
+
+
+def test_parse_author_followers_empty() -> None:
+    """Test parsing when no expansion data is present."""
+    data = {"data": []}
+    followers = XFeedPuller._parse_author_followers(data)
+    assert followers == {}
 
 
 # --- Poll with mock httpx ---
@@ -95,6 +151,32 @@ async def test_poll_pushes_tweets(
 
     # Verify since_id was updated to newest tweet
     mock_redis.set.assert_called_once_with("x:since_id:999", "1234567890123456789")
+
+
+@pytest.mark.asyncio
+async def test_poll_captures_engagement_metrics(
+    puller: XFeedPuller, mock_redis: AsyncMock, timeline_data_with_metrics: dict
+) -> None:
+    """Test that polling captures engagement metrics and author followers."""
+    puller._accounts = {
+        "cryptoalpha": {"user_id": "999", "category": "calls", "priority": "high"}
+    }
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(return_value=MockResponse(timeline_data_with_metrics))
+    puller._client = mock_client
+
+    count = await puller.poll()
+    assert count == 3
+
+    # Verify the pushed messages include engagement data
+    pushed_messages = [
+        json.loads(call.args[1]) for call in mock_redis.rpush.call_args_list
+    ]
+    first_msg = pushed_messages[0]
+    assert first_msg["engagement"]["likes"] == 150
+    assert first_msg["engagement"]["retweets"] == 45
+    assert first_msg["author_followers"] == 50000
 
 
 # --- since_id tracking ---

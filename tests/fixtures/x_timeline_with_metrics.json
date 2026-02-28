@@ -1,0 +1,58 @@
+{
+  "data": [
+    {
+      "id": "1234567890123456789",
+      "author_id": "999",
+      "text": "$MONKE looking bullish, chart is breaking out. Big accumulation phase.",
+      "created_at": "2024-03-15T10:30:00.000Z",
+      "public_metrics": {
+        "like_count": 150,
+        "retweet_count": 45,
+        "reply_count": 12,
+        "quote_count": 8
+      }
+    },
+    {
+      "id": "1234567890123456788",
+      "author_id": "999",
+      "text": "Just spotted $BONK with some nice volume spike. Watching closely.",
+      "created_at": "2024-03-15T10:25:00.000Z",
+      "public_metrics": {
+        "like_count": 30,
+        "retweet_count": 5,
+        "reply_count": 3,
+        "quote_count": 1
+      }
+    },
+    {
+      "id": "1234567890123456787",
+      "author_id": "999",
+      "text": "GM everyone. Market looking green today.",
+      "created_at": "2024-03-15T10:20:00.000Z",
+      "public_metrics": {
+        "like_count": 10,
+        "retweet_count": 2,
+        "reply_count": 1,
+        "quote_count": 0
+      }
+    }
+  ],
+  "includes": {
+    "users": [
+      {
+        "id": "999",
+        "username": "cryptoalpha",
+        "public_metrics": {
+          "followers_count": 50000,
+          "following_count": 500,
+          "tweet_count": 12000
+        }
+      }
+    ]
+  },
+  "meta": {
+    "result_count": 3,
+    "newest_id": "1234567890123456789",
+    "oldest_id": "1234567890123456787"
+  }
+}

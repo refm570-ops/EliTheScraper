@@ -58,3 +58,19 @@ volume_trend:
   exploding:
     change_24h_above: 100
     score: 20
+
+x_sentiment:
+  engagement:
+    noise: 5        # below = -10
+    low: 25         # below = 0
+    moderate: 100   # below = +5
+    significant: 500 # below = +10, above = +15
+  reach:
+    small: 1000     # below = -5
+    mid: 10000      # below = 0
+    influencer: 100000  # below = +5, above = +10
+  sentiment:
+    bearish_strong: 0.6  # above = -15
+    bearish_lean: 0.4    # above = -5
+    bullish_strong: 0.7  # above = +10
+    bullish_lean: 0.5    # above = +5

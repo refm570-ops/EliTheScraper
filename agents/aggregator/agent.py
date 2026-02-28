@@ -39,13 +39,14 @@ class SignalAggregator:
         social_metrics: dict[str, Any],
         score_result: dict[str, Any],
         cross_ref_result: dict[str, Any] | None = None,
+        x_sentiment_result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Determine alert level and generate summary.
 
         Returns: alert_level, notify_mode, summary, blocked_reason (if any).
         """
         alert_level, notify_mode, blocked_reason = self._determine_level(
-            social_metrics, score_result, cross_ref_result
+            social_metrics, score_result, cross_ref_result, x_sentiment_result
         )
 
         if alert_level == "suppress":
@@ -58,7 +59,8 @@ class SignalAggregator:
 
         # Get LLM summary
         summary = await self._get_summary(
-            ticker, social_metrics, score_result, alert_level, cross_ref_result
+            ticker, social_metrics, score_result, alert_level,
+            cross_ref_result, x_sentiment_result,
         )
 
         return {
@@ -98,11 +100,16 @@ class SignalAggregator:
         social_metrics: dict[str, Any],
         score_result: dict[str, Any],
         cross_ref_result: dict[str, Any] | None = None,
+        x_sentiment_result: dict[str, Any] | None = None,
     ) -> tuple[str, str, str | None]:
         """Deterministic alert tier selection using alert_rules.yml."""
         levels = ALERT_RULES.get("alert_levels", {})
         unique_groups = social_metrics.get("unique_groups", 0)
         total_score = score_result.get("total_score", 0)
+
+        # Apply X sentiment score boost/penalty
+        if x_sentiment_result and x_sentiment_result.get("x_data_available"):
+            total_score += x_sentiment_result.get("x_sentiment_score", 0)
 
         # Try act_now first
         act_now = levels.get("act_now", {})
@@ -146,6 +153,7 @@ class SignalAggregator:
         score_result: dict[str, Any],
         alert_level: str,
         cross_ref_result: dict[str, Any] | None = None,
+        x_sentiment_result: dict[str, Any] | None = None,
     ) -> str:
         """Get LLM-generated summary sentence."""
         payload: dict[str, Any] = {
@@ -166,6 +174,12 @@ class SignalAggregator:
                 "corroborated": cross_ref_result.get("corroborated"),
                 "confidence": cross_ref_result.get("confidence"),
                 "platforms": social_metrics.get("sources", []),
+            }
+        if x_sentiment_result and x_sentiment_result.get("x_data_available"):
+            payload["x_sentiment"] = {
+                "score": x_sentiment_result.get("x_sentiment_score"),
+                "breakdown": x_sentiment_result.get("x_score_breakdown"),
+                "narrative": x_sentiment_result.get("key_narrative"),
             }
         user_content = json.dumps(payload, indent=2)
 

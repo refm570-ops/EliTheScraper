@@ -11,6 +11,8 @@ from agents.aggregator.agent import SignalAggregator
 from agents.classifier.agent import MessageClassifier
 from agents.cross_ref.agent import CrossReferenceAnalyst
 from agents.scorer.agent import FundamentalsScorer
+from agents.x_sentiment.agent import XSentimentAnalyzer
+from agents.x_sentiment.scorer import score_x_sentiment
 from pipeline.buffer import MessageBuffer
 from skills.alert_dispatcher.bot import AlertDispatcher
 from skills.alert_dispatcher.templates import format_phase2_alert
@@ -50,6 +52,7 @@ class Orchestrator:
         scorer: FundamentalsScorer,
         aggregator: SignalAggregator,
         cross_ref: CrossReferenceAnalyst | None = None,
+        x_sentiment_analyzer: XSentimentAnalyzer | None = None,
         batch_size: int = 50,
         batch_interval: float = 300.0,  # 5 minutes
         heartbeat_interval: float = 60.0,
@@ -64,6 +67,7 @@ class Orchestrator:
         self._scorer = scorer
         self._aggregator = aggregator
         self._cross_ref = cross_ref
+        self._x_sentiment_analyzer = x_sentiment_analyzer
         self._batch_size = batch_size
         self._batch_interval = batch_interval
         self._heartbeat_interval = heartbeat_interval
@@ -150,13 +154,18 @@ class Orchestrator:
             for msg in batch:
                 raw_by_id[msg.get("message_id")] = msg
 
-            # Step 3: Record all actionable mentions to TickerStore (with source)
+            # Step 3: Record all actionable mentions to TickerStore (with source + engagement)
             for cls in actionable:
                 ticker = cls.get("ticker")
                 if not ticker:
                     continue
                 raw_msg = raw_by_id.get(cls.get("id"), {})
                 source = raw_msg.get("source", "telegram")
+                engagement = raw_msg.get("engagement")
+                author_followers = raw_msg.get("author_followers")
+                engagement_data = None
+                if engagement:
+                    engagement_data = {**engagement, "author_followers": author_followers}
                 await self._ticker_store.record_mention(
                     ticker=ticker,
                     intent=cls.get("intent", ""),
@@ -168,6 +177,7 @@ class Orchestrator:
                     message_id=raw_msg.get("message_id"),
                     raw_text=raw_msg.get("text"),
                     source=source,
+                    engagement_data=engagement_data,
                 )
 
             # Step 4: Process unique TICKER_CALL tickers
@@ -256,9 +266,37 @@ class Orchestrator:
         # Score fundamentals
         score_result = await self._scorer.score(metadata)
 
-        # Aggregate → alert decision (with cross-ref result)
+        # X Sentiment analysis (Phase 4) — only when X mentions exist
+        x_sentiment_result = None
+        sources = social_metrics.get("sources", [])
+        if self._x_sentiment_analyzer and "twitter" in sources:
+            try:
+                x_mentions = await self._ticker_store.get_mentions_by_source(
+                    ticker, "twitter", window_hours=6.0
+                )
+                engagement_summary = await self._ticker_store.get_x_engagement_summary(
+                    ticker, window_hours=6.0
+                )
+                llm_sentiment = await self._x_sentiment_analyzer.analyze(
+                    ticker, x_mentions
+                )
+                x_sentiment_result = score_x_sentiment(
+                    engagement_summary, llm_sentiment
+                )
+                # Attach narrative and engagement summary for display
+                x_sentiment_result["key_narrative"] = llm_sentiment.get("key_narrative", "")
+                x_sentiment_result["engagement_summary"] = engagement_summary
+                log.info(
+                    "orchestrator.x_sentiment",
+                    ticker=ticker,
+                    score=x_sentiment_result["x_sentiment_score"],
+                )
+            except Exception:
+                log.warning("orchestrator.x_sentiment_error", ticker=ticker, exc_info=True)
+
+        # Aggregate → alert decision (with cross-ref + X sentiment result)
         agg_result = await self._aggregator.aggregate(
-            ticker, social_metrics, score_result, cross_ref_result
+            ticker, social_metrics, score_result, cross_ref_result, x_sentiment_result
         )
 
         alert_level = agg_result["alert_level"]
@@ -277,6 +315,7 @@ class Orchestrator:
             aggregator_result=agg_result,
             metadata=metadata,
             cross_ref_result=cross_ref_result,
+            x_sentiment_result=x_sentiment_result,
         )
 
         # Enqueue and log

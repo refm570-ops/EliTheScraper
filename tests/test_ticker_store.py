@@ -228,6 +228,102 @@ async def test_get_mentions_by_source(ticker_store: TickerStore) -> None:
     assert len(empty) == 0
 
 
+# --- Engagement data tests (Phase 4) ---
+
+
+@pytest.mark.asyncio
+async def test_record_mention_with_engagement_data(ticker_store: TickerStore) -> None:
+    """Test recording a mention with engagement data."""
+    engagement = {
+        "likes": 100,
+        "retweets": 30,
+        "replies": 5,
+        "quotes": 3,
+        "author_followers": 50000,
+    }
+    await ticker_store.record_mention(
+        ticker="$MONKE",
+        intent="TICKER_CALL",
+        conviction="STRONG",
+        context="X alpha",
+        group_id=999,
+        group_name="@cryptoalpha",
+        sender_id=999,
+        message_id=3001,
+        raw_text="$MONKE breaking out",
+        source="twitter",
+        engagement_data=engagement,
+    )
+
+    mentions = await ticker_store.get_mentions_by_source("$MONKE", "twitter", window_hours=1.0)
+    assert len(mentions) == 1
+    assert mentions[0]["engagement_data"] is not None
+    assert mentions[0]["engagement_data"]["likes"] == 100
+    assert mentions[0]["engagement_data"]["author_followers"] == 50000
+
+
+@pytest.mark.asyncio
+async def test_record_mention_no_engagement(ticker_store: TickerStore) -> None:
+    """Test that mentions without engagement data store None."""
+    await ticker_store.record_mention(
+        ticker="$BONK",
+        intent="TICKER_CALL",
+        conviction="MODERATE",
+        context="TG mention",
+        group_id=-100123,
+        group_name="Alpha Calls",
+        sender_id=123,
+        message_id=4001,
+        raw_text="$BONK looking good",
+        source="telegram",
+    )
+
+    mentions = await ticker_store.get_mentions_by_source("$BONK", "telegram", window_hours=1.0)
+    assert len(mentions) == 1
+    assert mentions[0]["engagement_data"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_x_engagement_summary(ticker_store: TickerStore) -> None:
+    """Test aggregated engagement summary for X mentions."""
+    for i, eng in enumerate([
+        {"likes": 100, "retweets": 30, "replies": 5, "quotes": 3, "author_followers": 50000},
+        {"likes": 50, "retweets": 10, "replies": 2, "quotes": 1, "author_followers": 20000},
+    ]):
+        await ticker_store.record_mention(
+            ticker="$MONKE",
+            intent="TICKER_CALL",
+            conviction="STRONG",
+            context=f"tweet {i}",
+            group_id=999,
+            group_name="@cryptoalpha",
+            sender_id=999,
+            message_id=5001 + i,
+            raw_text=f"$MONKE tweet {i}",
+            source="twitter",
+            engagement_data=eng,
+        )
+
+    summary = await ticker_store.get_x_engagement_summary("$MONKE", window_hours=1.0)
+    assert summary["total_likes"] == 150
+    assert summary["total_retweets"] == 40
+    assert summary["total_replies"] == 7
+    assert summary["total_quotes"] == 4
+    assert summary["max_author_followers"] == 50000
+    assert summary["avg_author_followers"] == 35000.0
+    assert summary["tweet_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_x_engagement_summary_no_tweets(ticker_store: TickerStore) -> None:
+    """Test engagement summary with no X mentions."""
+    summary = await ticker_store.get_x_engagement_summary("$NOBODY", window_hours=1.0)
+    assert summary["total_likes"] == 0
+    assert summary["tweet_count"] == 0
+    assert summary["max_author_followers"] is None
+    assert summary["avg_author_followers"] is None
+
+
 # --- Alert log tests ---
 
 
