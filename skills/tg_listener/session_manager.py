@@ -11,7 +11,15 @@ log = structlog.get_logger()
 
 
 class SessionManager:
-    """Manages Telethon client session with auto-reconnect."""
+    """Manages Telethon client session with auto-reconnect.
+
+    Anti-ban note on read receipts:
+        Telethon does NOT automatically send read receipts (read marks) when
+        receiving messages via event handlers. Read receipts are only sent when
+        client.send_read_acknowledge() is called explicitly. This listener
+        NEVER calls that method, so lurker accounts remain invisible to groups
+        that track read-but-never-participate patterns.
+    """
 
     def __init__(
         self,
