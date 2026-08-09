@@ -1,3 +1,5 @@
+# Template. Copy to config/groups.yml (gitignored) and fill in real group IDs.
+# Never put real IDs in this file — it is tracked and published.
 groups:
   - id: -1001234567890
     name: "Alpha Calls"

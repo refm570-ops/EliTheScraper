@@ -74,8 +74,8 @@ crypto-alpha-system/
 │   └── alert_log.py
 │
 ├── config/
-│   ├── groups.yml
-│   ├── x_accounts.yml
+│   ├── groups.example.yml      # copy to groups.yml (gitignored) with real IDs
+│   ├── x_accounts.example.yml  # copy to x_accounts.yml (gitignored)
 │   ├── scoring_weights.yml
 │   └── alert_rules.yml
 │

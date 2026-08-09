@@ -1,5 +1,11 @@
 .env
 *.session
+
+# Target configs: hold real group IDs / accounts being monitored.
+# Only the .example.yml placeholders are tracked.
+config/groups.yml
+config/x_accounts.yml
+
 __pycache__/
 *.db
 .venv/

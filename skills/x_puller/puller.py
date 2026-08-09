@@ -9,6 +9,8 @@ import redis.asyncio as aioredis
 import structlog
 import yaml
 
+from skills.local_config import resolve_config_path
+
 log = structlog.get_logger()
 
 X_API_BASE = "https://api.x.com/2"
@@ -48,7 +50,7 @@ class XFeedPuller:
     @staticmethod
     def _load_accounts(path: str) -> list[dict[str, Any]]:
         try:
-            with open(path) as f:
+            with open(resolve_config_path(path)) as f:
                 config = yaml.safe_load(f)
             return config.get("accounts", [])
         except FileNotFoundError:

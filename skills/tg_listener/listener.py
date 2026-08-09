@@ -12,6 +12,7 @@ import structlog
 import yaml
 from telethon import events
 
+from skills.local_config import resolve_config_path
 from skills.tg_listener.flood_guard import FloodGuard
 from skills.tg_listener.session_manager import SessionManager
 
@@ -56,7 +57,7 @@ class TelegramListener:
 
     @staticmethod
     def _load_groups(path: str) -> dict[int, dict[str, Any]]:
-        with open(path) as f:
+        with open(resolve_config_path(path)) as f:
             config = yaml.safe_load(f)
         groups: dict[int, dict[str, Any]] = {}
         for g in config.get("groups", []):
