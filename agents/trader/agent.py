@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import anthropic
@@ -28,7 +29,8 @@ log = structlog.get_logger()
 # "Opus 5" — the top reasoning tier, used ONLY for this low-volume, high-stakes
 # judgment (gated behind aggregator buy-grade AND a passed safety gate, so a
 # handful of calls/day). Classification stays on Haiku, scoring on Sonnet.
-MODEL = "claude-opus-5"
+# Overridable via EVALUATOR_MODEL env for flexibility / model migration.
+MODEL = os.getenv("EVALUATOR_MODEL", "claude-opus-5")
 MAX_RETRIES = 3
 INITIAL_RETRY_DELAY = 2.0
 

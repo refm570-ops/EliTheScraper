@@ -11,6 +11,7 @@ daily-loss circuit breaker trips it automatically.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import structlog
@@ -21,7 +22,13 @@ from trading.models import Conviction, Opportunity, TradeDecision
 
 log = structlog.get_logger()
 
-KILL_SWITCH_KEY = "trading:enabled"
+KILL_SWITCH_KEY = "trading:enabled"       # manual, sticky ("0" = killed)
+HALT_UNTIL_KEY = "trading:halt_until"     # daily breaker, auto-clears at expiry
+
+
+def _utc_next_midnight(now: float | None = None) -> float:
+    t = now if now is not None else time.time()
+    return t - (t % 86400) + 86400
 
 
 @dataclass
@@ -29,6 +36,7 @@ class RiskDecision:
     approved: bool
     size_sol: float
     reason: str
+    slippage_bps: int = 500
 
 
 class RiskManager:
@@ -43,26 +51,51 @@ class RiskManager:
         self._redis = redis
         self._risk = config.risk or {}
         self._sizing = (config.sizing or {}).get("conviction_fractions", {})
+        self._max_slippage_bps = int((config.execution or {}).get("max_slippage_bps", 1000))
 
     async def is_killed(self) -> bool:
-        """True if the global kill switch is engaged."""
+        """True if the manual kill switch is engaged OR a daily halt is active.
+
+        FAILS CLOSED: if Redis cannot be read, the kill switch is treated as
+        engaged — an unverifiable emergency stop must block, not permit, an
+        autonomous live buy.
+        """
         if self._redis is None:
             return False
         try:
-            val = await self._redis.get(KILL_SWITCH_KEY)
+            manual = await self._redis.get(KILL_SWITCH_KEY)
+            halt_until = await self._redis.get(HALT_UNTIL_KEY)
         except Exception:  # noqa: BLE001
-            return False
-        if val is None:
-            return False  # absent = enabled
-        return str(val).strip().lower() in ("0", "false", "off", "no")
+            log.warning("risk.kill_switch_unreadable_fail_closed", exc_info=True)
+            return True
+        if manual is not None and str(manual).strip().lower() in ("0", "false", "off", "no"):
+            return True
+        if halt_until is not None:
+            try:
+                if time.time() < float(halt_until):
+                    return True
+            except (TypeError, ValueError):
+                pass
+        return False
 
     async def engage_kill_switch(self, reason: str) -> None:
+        """Permanent manual kill (stays until an operator clears it)."""
         log.error("risk.kill_switch_engaged", reason=reason)
         if self._redis is not None:
             try:
                 await self._redis.set(KILL_SWITCH_KEY, "0")
             except Exception:  # noqa: BLE001
                 log.warning("risk.kill_switch_set_failed", exc_info=True)
+
+    async def halt_for_day(self, reason: str) -> None:
+        """Trip the daily circuit breaker; auto-clears at the next UTC midnight."""
+        until = _utc_next_midnight()
+        log.error("risk.daily_halt_engaged", reason=reason, until=until)
+        if self._redis is not None:
+            try:
+                await self._redis.set(HALT_UNTIL_KEY, str(until))
+            except Exception:  # noqa: BLE001
+                log.warning("risk.daily_halt_set_failed", exc_info=True)
 
     async def authorize(
         self, opportunity: Opportunity, decision: TradeDecision
@@ -78,7 +111,7 @@ class RiskManager:
         daily_limit = float(self._risk.get("daily_loss_limit_sol", 0.5))
         realized_today = await self._store.realized_pnl_today()
         if realized_today <= -abs(daily_limit):
-            await self.engage_kill_switch(
+            await self.halt_for_day(
                 f"daily loss {realized_today:.3f} SOL <= -{daily_limit} SOL"
             )
             return RiskDecision(False, 0.0, f"daily loss limit hit ({realized_today:.3f} SOL)")
@@ -118,9 +151,15 @@ class RiskManager:
         if size < min_floor:
             return RiskDecision(False, 0.0, f"clamped size {size:.4f} below floor {min_floor}")
 
+        # Slippage is a guardrail too: clamp the evaluator's request DOWN to the
+        # config buy-slippage cap. The LLM (fed attacker-controlled message text)
+        # can never widen tolerance beyond config.
+        slippage = min(int(decision.max_slippage_bps), self._max_slippage_bps)
+        slippage = max(10, slippage)
+
         log.info("risk.authorized", ticker=opportunity.ticker, size_sol=round(size, 4),
-                 requested=decision.size_sol)
-        return RiskDecision(True, round(size, 6), "authorized")
+                 requested=decision.size_sol, slippage_bps=slippage)
+        return RiskDecision(True, round(size, 6), "authorized", slippage_bps=slippage)
 
     def _clamp_size(self, decision: TradeDecision) -> float:
         per_trade_cap = self._cfg.max_trade_sol()  # already <= HARD ceiling

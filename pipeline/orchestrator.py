@@ -379,11 +379,23 @@ class Orchestrator:
         sources = social_metrics.get("sources") or []
         source = sources[0] if len(sources) == 1 else ("mixed" if sources else "telegram")
 
+        # Venue routing: pump.fun bonding-curve tokens (dexId "pumpfun", pre-
+        # graduation) must go to PumpPortal, not Jupiter. Graduated/AMM tokens
+        # route to Jupiter. Unknown → executor defaults to Jupiter.
+        dex_id = str(metadata.get("dex_id") or "").lower()
+        labels = [str(x).lower() for x in (metadata.get("labels") or [])]
+        if "pump" in dex_id or any("bonding" in x for x in labels):
+            venue = TokenVenue.BONDING
+        elif dex_id:
+            venue = TokenVenue.AMM
+        else:
+            venue = TokenVenue.UNKNOWN
+
         opportunity = Opportunity(
             ticker=ticker,
             address=address,
             chain=chain,
-            venue=TokenVenue.UNKNOWN,  # routed by executor (defaults to AMM/Jupiter)
+            venue=venue,
             source=source,
             aggregator_score=float(score_result.get("total_score", 0) or 0),
             alert_level=alert_level,

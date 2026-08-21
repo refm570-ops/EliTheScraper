@@ -53,6 +53,7 @@ class SolanaExecutor(Executor):
         jito_tip_sol: float = 0.0005,
         confirm_timeout_seconds: float = 60.0,
         confirm_retries: int = 3,
+        min_gas_reserve_sol: float = 0.05,
     ) -> None:
         self._wallet = wallet
         self._rpc_url = rpc_url
@@ -61,6 +62,8 @@ class SolanaExecutor(Executor):
         self._jito_tip_sol = jito_tip_sol
         self._confirm_timeout = confirm_timeout_seconds
         self._confirm_retries = confirm_retries
+        self._min_gas_reserve = min_gas_reserve_sol
+        self._decimals_cache: dict[str, int] = {}
         self._http = httpx.AsyncClient(timeout=20.0)
 
     async def close(self) -> None:
@@ -71,19 +74,31 @@ class SolanaExecutor(Executor):
         self, opportunity: Opportunity, sol_amount: float, max_slippage_bps: int
     ) -> ExecutionResult:
         try:
+            # Gas reserve: never spend below the reserve needed to fund the
+            # eventual exit transaction.
+            balance = await self._get_balance_sol()
+            if balance - sol_amount < self._min_gas_reserve:
+                raise RuntimeError(
+                    f"insufficient balance {balance:.4f} SOL for {sol_amount:.4f} "
+                    f"+ {self._min_gas_reserve:.4f} gas reserve"
+                )
+
             if opportunity.venue is TokenVenue.BONDING:
                 sig = await self._pumpportal_trade(
                     "buy", opportunity.address, sol_amount, max_slippage_bps,
                     denominated_in_sol=True,
                 )
+                price = await self.current_price_sol_for(opportunity.address)
+                token_amount = (sol_amount / price) if price else None
             else:
-                sig = await self._jupiter_swap(
+                sig, out_base_units = await self._jupiter_swap(
                     input_mint=WSOL_MINT, output_mint=opportunity.address,
                     amount=int(sol_amount * LAMPORTS_PER_SOL),
                     max_slippage_bps=max_slippage_bps,
                 )
-            price = await self.current_price_sol_for(opportunity.address)
-            token_amount = (sol_amount / price) if price else None
+                decimals = await self._get_decimals(opportunity.address)
+                token_amount = out_base_units / (10 ** decimals)  # whole tokens
+                price = (sol_amount / token_amount) if token_amount else None
             return ExecutionResult(
                 success=True, side=TradeSide.BUY, address=opportunity.address,
                 tx_signature=sig, sol_amount=sol_amount, token_amount=token_amount,
@@ -99,13 +114,15 @@ class SolanaExecutor(Executor):
     ) -> ExecutionResult:
         try:
             if position.venue is TokenVenue.BONDING:
+                # PumpPortal sells are denominated in whole tokens directly.
                 sig = await self._pumpportal_trade(
                     "sell", position.address, token_amount, max_slippage_bps,
                     denominated_in_sol=False,
                 )
             else:
-                raw_amount = int(token_amount * (10 ** self._token_decimals(position)))
-                sig = await self._jupiter_swap(
+                decimals = await self._get_decimals(position.address)
+                raw_amount = int(token_amount * (10 ** decimals))
+                sig, _ = await self._jupiter_swap(
                     input_mint=position.address, output_mint=WSOL_MINT,
                     amount=raw_amount, max_slippage_bps=max_slippage_bps,
                 )
@@ -125,21 +142,33 @@ class SolanaExecutor(Executor):
         return await self.current_price_sol_for(position.address)
 
     async def current_price_sol_for(self, address: str | None) -> float | None:
-        """Price in SOL per token via a small Jupiter quote (token -> SOL)."""
+        """Price in SOL per WHOLE token via a Jupiter quote (1 token -> SOL)."""
         if not address:
             return None
         try:
-            # Quote 1 whole token's worth is unreliable pre-decimals; use a
-            # fixed lamport-scale probe and invert.
-            probe = 1_000_000  # base units of the token
+            decimals = await self._get_decimals(address)
+            probe = 10 ** decimals  # exactly one whole token in base units
             quote = await self._jupiter_quote(address, WSOL_MINT, probe, 500)
             out_lamports = int(quote["outAmount"])
-            # price(SOL/token) = (out_lamports/1e9) / (probe/10^decimals)
-            # decimals unknown here; caller-side ratios use consistent scaling,
-            # so return SOL per base-unit * 1e0 — good enough for gain% ratios.
-            return (out_lamports / LAMPORTS_PER_SOL) / probe
+            return out_lamports / LAMPORTS_PER_SOL  # SOL per whole token
         except Exception:
             return None
+
+    async def _get_decimals(self, mint: str) -> int:
+        if mint in self._decimals_cache:
+            return self._decimals_cache[mint]
+        result = await self._rpc(
+            "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "confirmed"}]
+        )
+        info = ((((result or {}).get("value") or {}).get("data") or {}).get("parsed") or {}).get("info") or {}
+        decimals = int(info.get("decimals", 6))
+        self._decimals_cache[mint] = decimals
+        return decimals
+
+    async def _get_balance_sol(self) -> float:
+        result = await self._rpc("getBalance", [self._wallet.pubkey])
+        lamports = result.get("value", 0) if isinstance(result, dict) else (result or 0)
+        return lamports / LAMPORTS_PER_SOL
 
     # ---- PumpPortal (bonding curve) ---------------------------------------
     async def _pumpportal_trade(
@@ -178,8 +207,10 @@ class SolanaExecutor(Executor):
 
     async def _jupiter_swap(
         self, input_mint: str, output_mint: str, amount: int, max_slippage_bps: int
-    ) -> str:
+    ) -> tuple[str, int]:
+        """Execute a Jupiter swap. Returns (tx_signature, out_amount_base_units)."""
         quote = await self._jupiter_quote(input_mint, output_mint, amount, max_slippage_bps)
+        out_amount = int(quote.get("outAmount", 0))
         body = {
             "quoteResponse": quote,
             "userPublicKey": self._wallet.pubkey,
@@ -191,12 +222,8 @@ class SolanaExecutor(Executor):
         swap_tx_b64 = resp.json()["swapTransaction"]
         tx_bytes = base64.b64decode(swap_tx_b64)
         signed = self._wallet.sign_versioned(tx_bytes)
-        return await self._send_and_confirm(bytes(signed))
-
-    def _token_decimals(self, position: Position) -> int:
-        # Most SPL memecoins use 6 decimals (pump.fun default); overridable via
-        # metadata if present. Conservative default keeps sell sizing sane.
-        return int(position and 6)
+        sig = await self._send_and_confirm(bytes(signed))
+        return sig, out_amount
 
     # ---- send + confirm ----------------------------------------------------
     async def _send_and_confirm(self, signed_tx: bytes) -> str:

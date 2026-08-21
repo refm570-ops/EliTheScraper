@@ -169,6 +169,7 @@ async def main() -> None:
             jito_tip_sol=float(exec_cfg.get("jito_tip_sol", 0.0005)),
             confirm_timeout_seconds=float(exec_cfg.get("confirm_timeout_seconds", 60)),
             confirm_retries=int(exec_cfg.get("confirm_retries", 3)),
+            min_gas_reserve_sol=float(trading_config.risk.get("min_gas_reserve_sol", 0.05)),
         )
         log.warning("main.LIVE_TRADING_ENABLED", pubkey=wallet.pubkey)
     else:
@@ -176,16 +177,13 @@ async def main() -> None:
         executor = PaperExecutor(fetcher=metadata_fetcher, sol_usd_reference=sol_usd)
         log.info("main.paper_trading", mode=trading_config.mode)
 
-    safety_gate = SafetyGate(
-        safety_config=trading_config.safety,
-        rpc=None,  # defaults to public RPC; override via SOLANA_RPC_URL below
-    )
+    # Decide the RPC client first, then build the gate ONCE (avoids leaking the
+    # httpx clients of a throwaway instance).
+    rpc_client = None
     if os.getenv("SOLANA_RPC_URL"):
         from skills.safety.providers import SolanaRPC
-        safety_gate = SafetyGate(
-            safety_config=trading_config.safety,
-            rpc=SolanaRPC(rpc_url=os.getenv("SOLANA_RPC_URL")),
-        )
+        rpc_client = SolanaRPC(rpc_url=os.getenv("SOLANA_RPC_URL"))
+    safety_gate = SafetyGate(safety_config=trading_config.safety, rpc=rpc_client)
 
     evaluator = OpportunityEvaluator(api_key=api_key)
     risk_manager = RiskManager(config=trading_config, trade_store=trade_store, redis=redis)
@@ -199,6 +197,7 @@ async def main() -> None:
         approval_gate = ApprovalGate(
             bot_token=config["TG_ALERT_BOT_TOKEN"],
             owner_chat_id=config["TG_ALERT_CHAT_ID"],
+            owner_user_id=os.getenv("TRADING_OWNER_USER_ID"),
         )
 
     trading_engine = TradingEngine(
@@ -220,6 +219,8 @@ async def main() -> None:
         execution_config=trading_config.execution,
         fetcher=metadata_fetcher,
         min_liquidity_usd=float(trading_config.safety.get("min_liquidity_usd", 5000)),
+        risk_manager=risk_manager,
+        daily_loss_limit_sol=float(trading_config.risk.get("daily_loss_limit_sol", 0.5)),
     )
     monitor_task = PeriodicTask(
         name="position_monitor",

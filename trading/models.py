@@ -173,6 +173,7 @@ class TradeProposal:
     safety: SafetyReport
     decision: TradeDecision
     approved_size_sol: float        # post risk-clamp size actually to be sent
+    approved_slippage_bps: int = 500  # post risk-clamp slippage (<= config cap)
     id: str = field(default_factory=_new_id)
     created_at: float = field(default_factory=time.time)
 

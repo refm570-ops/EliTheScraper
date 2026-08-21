@@ -33,12 +33,21 @@ class _Pending:
 
 
 class ApprovalGate:
-    def __init__(self, bot_token: str, owner_chat_id: str | int) -> None:
+    def __init__(
+        self,
+        bot_token: str,
+        owner_chat_id: str | int,
+        owner_user_id: str | int | None = None,
+    ) -> None:
         self._token = bot_token
         try:
             self._owner_chat_id = int(owner_chat_id)
         except (TypeError, ValueError):
             self._owner_chat_id = owner_chat_id  # channel username etc.
+        try:
+            self._owner_user_id = int(owner_user_id) if owner_user_id else None
+        except (TypeError, ValueError):
+            self._owner_user_id = None
         self._pending: dict[str, _Pending] = {}
         self._execute_cb: ExecuteCallback | None = None
         self._app = None
@@ -90,11 +99,14 @@ class ApprovalGate:
         if query is None:
             return
         await query.answer()
+        self._prune_expired()
 
-        # Only the owner may approve.
-        chat = query.message.chat if query.message else None
-        if chat is not None and self._owner_chat_id not in (chat.id, getattr(chat, "username", None)):
-            log.warning("approval.unauthorized", chat_id=getattr(chat, "id", None))
+        # Authorize on the CLICKING USER, deny by default. A money-moving
+        # confirm must come from the owner, not merely from someone in the chat.
+        user = query.from_user
+        user_id = user.id if user is not None else None
+        if not self._is_authorized(user_id, query):
+            log.warning("approval.unauthorized", user_id=user_id)
             return
 
         data = query.data or ""
@@ -124,6 +136,20 @@ class ApprovalGate:
                     await self._execute_cb(pending.proposal)
                 except Exception:  # noqa: BLE001
                     log.error("approval.execute_error", id=pid, exc_info=True)
+
+    def _is_authorized(self, user_id: int | None, query) -> bool:  # noqa: ANN001
+        if user_id is None:
+            return False
+        # Preferred: explicit owner user id.
+        if self._owner_user_id is not None:
+            return user_id == self._owner_user_id
+        # Fallback (no owner user id configured): only allow when the button was
+        # tapped in a PRIVATE chat whose id matches owner_chat_id (i.e. the
+        # owner's own DM). Missing message/chat → deny.
+        chat = query.message.chat if query.message else None
+        if chat is None:
+            return False
+        return getattr(chat, "type", None) == "private" and chat.id == self._owner_chat_id
 
     def _prune_expired(self) -> None:
         now = time.time()

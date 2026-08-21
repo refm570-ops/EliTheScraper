@@ -126,6 +126,8 @@ class TokenMetadataFetcher:
             "base_address": base_address,
             "pair_address": pair_address,
             "chain": chain,
+            "dex_id": best.get("dexId"),          # e.g. "pumpfun", "raydium"
+            "labels": best.get("labels") or [],
             "dex_url": dex_url,
             "holder_count": None,
             "top10_holder_pct": None,
@@ -177,6 +179,8 @@ class TokenMetadataFetcher:
             "base_address": base_address,
             "pair_address": pair_address,
             "chain": chain,
+            "dex_id": best.get("dexId"),
+            "labels": best.get("labels") or [],
             "dex_url": dex_url,
             "holder_count": None,
             "top10_holder_pct": None,
@@ -211,9 +215,18 @@ class TokenMetadataFetcher:
         if holder_count is None:
             return None
 
+        # Birdeye returns top10HolderPercent as a 0..1 fraction; normalize to a
+        # percent so downstream thresholds (scorer, safety gate) compare like
+        # for like.
+        normalized_top10 = None
+        if top10_pct is not None:
+            normalized_top10 = float(top10_pct)
+            if normalized_top10 <= 1.0:
+                normalized_top10 *= 100.0
+
         return {
             "holder_count": holder_count,
-            "top10_holder_pct": float(top10_pct) if top10_pct is not None else None,
+            "top10_holder_pct": normalized_top10,
         }
 
     async def _get_cached(self, ticker: str) -> dict[str, Any] | None:

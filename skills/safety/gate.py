@@ -31,6 +31,9 @@ class SafetyGate:
         self._rpc = rpc or SolanaRPC()
         self._rugcheck = rugcheck or RugCheckClient()
         self._goplus = goplus or GoPlusClient()
+        if not self._cfg.get("fail_closed", True):
+            log.warning("safety.fail_open_configured",
+                        note="fail_closed=false disables all fail-closed protection")
 
     async def close(self) -> None:
         await self._rpc.close()
@@ -187,6 +190,9 @@ class SafetyGate:
             report.add(SafetyCheck("top_holder_concentration", ok, Severity.HARD,
                                    f"top holder {top_holder:.0f}% > {max_top}% cap"
                                    if not ok else f"top {top_holder:.0f}%", value=top_holder))
+        elif self._fail_closed:
+            report.add(SafetyCheck("top_holder_concentration", False, Severity.HARD,
+                                   "single-top-holder data unavailable (fail-closed)"))
         if top10 is not None:
             ok = top10 <= max_top10
             report.add(SafetyCheck("top10_concentration", ok, Severity.HARD,
@@ -204,6 +210,8 @@ class SafetyGate:
             signals.append(not rug.get("honeypot", False))
         if goplus is not None:
             signals.append(not goplus.get("is_honeypot", False))
+            # transfer-pausable == de-facto freeze/unsellable vector.
+            signals.append(bool(goplus.get("transferable", True)))
         if not signals:
             if self._fail_closed:
                 report.add(SafetyCheck("sellable", False, Severity.HARD,

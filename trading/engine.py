@@ -90,7 +90,7 @@ class TradingEngine:
 
         proposal = TradeProposal(
             opportunity=opportunity, safety=report, decision=decision,
-            approved_size_sol=risk.size_sol,
+            approved_size_sol=risk.size_sol, approved_slippage_bps=risk.slippage_bps,
         )
 
         # 4. APPROVAL or AUTO.
@@ -113,16 +113,22 @@ class TradingEngine:
             log.info("engine.proposal_expired", ticker=opp.ticker)
             return
 
-        # Re-check the kill switch at the moment of execution.
-        if await self._risk.is_killed():
-            log.warning("engine.killed_at_execute", ticker=opp.ticker)
+        # Re-authorize against the LIVE book at the moment of execution. This
+        # closes the approval-window TOCTOU: kill switch, daily breaker,
+        # double-buy, and exposure caps are all re-checked here, not just at
+        # proposal time. Size/slippage are re-clamped to current headroom.
+        recheck = await self._risk.authorize(opp, proposal.decision)
+        if not recheck.approved:
+            log.warning("engine.reauthorize_blocked", ticker=opp.ticker, reason=recheck.reason)
             if self._notify:
-                await self._notify(f"🛑 Kill switch on — did not buy {opp.ticker}.", "normal")
+                await self._notify(
+                    f"🛑 Did not buy {opp.ticker}: {recheck.reason}", "normal")
             return
 
-        result = await self._executor.buy(
-            opp, proposal.approved_size_sol, proposal.decision.max_slippage_bps
-        )
+        size_sol = min(proposal.approved_size_sol, recheck.size_sol)
+        slippage_bps = min(proposal.approved_slippage_bps, recheck.slippage_bps)
+
+        result = await self._executor.buy(opp, size_sol, slippage_bps)
         await self._store.record_trade(result, opp.ticker, None)
 
         if not result.success:
@@ -135,7 +141,7 @@ class TradingEngine:
         position = Position(
             address=opp.address or "", ticker=opp.ticker, chain=opp.chain,
             venue=opp.venue, source=opp.source, entry_price=entry_price,
-            amount_sol=result.sol_amount or proposal.approved_size_sol,
+            amount_sol=result.sol_amount or size_sol,
             token_amount=result.token_amount or 0.0,
             initial_token_amount=result.token_amount or 0.0,
             status=PositionStatus.OPEN, is_paper=result.is_paper,

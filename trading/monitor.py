@@ -33,6 +33,8 @@ class PositionMonitor:
         execution_config: dict[str, Any],
         fetcher: TokenMetadataFetcher | None = None,
         min_liquidity_usd: float = 5000.0,
+        risk_manager: Any = None,
+        daily_loss_limit_sol: float = 0.5,
     ) -> None:
         self._store = trade_store
         self._executor = executor
@@ -40,22 +42,43 @@ class PositionMonitor:
         self._slippage_bps = int((execution_config or {}).get("max_slippage_bps", 1000))
         self._fetcher = fetcher
         self._min_liq = min_liquidity_usd
+        self._risk = risk_manager
+        self._daily_limit = abs(float(daily_loss_limit_sol))
 
     async def tick(self) -> None:
         if not self._exit.get("enabled", True):
             return
         positions = await self._store.open_positions()
+        unrealized = 0.0
         for pos in positions:
             try:
-                await self._evaluate(pos)
+                price = await self._evaluate(pos)
+                if price:
+                    unrealized += (price - pos.entry_price) * pos.token_amount
             except Exception:  # noqa: BLE001
                 log.error("monitor.position_error", id=pos.id, ticker=pos.ticker, exc_info=True)
 
-    async def _evaluate(self, pos: Position) -> None:
+        # Portfolio-level daily-loss circuit breaker: realized today + open
+        # unrealized drawdown. Trips the daily halt (auto-clears at UTC midnight),
+        # stopping NEW buys while existing stop-losses still fire.
+        if self._risk is not None:
+            try:
+                realized = await self._store.realized_pnl_today()
+                total = realized + unrealized
+                if total <= -self._daily_limit:
+                    await self._risk.halt_for_day(
+                        f"portfolio drawdown {total:.3f} SOL (realized {realized:.3f} "
+                        f"+ unrealized {unrealized:.3f})"
+                    )
+            except Exception:  # noqa: BLE001
+                log.warning("monitor.drawdown_check_error", exc_info=True)
+
+    async def _evaluate(self, pos: Position) -> float | None:
+        """Evaluate exit rules. Returns the current price (SOL/token) or None."""
         price = await self._executor.current_price_sol(pos)
         if price is None or price <= 0:
             log.debug("monitor.no_price", ticker=pos.ticker)
-            return
+            return None
 
         # Track peak for trailing stop.
         if pos.peak_price is None or price > pos.peak_price:
@@ -101,6 +124,7 @@ class PositionMonitor:
                 if tokens > 0:
                     await self._sell_partial(pos, tokens, price,
                                              reason=f"TP rung {pos.take_profit_hits + 1} at +{gain:.0f}%")
+        return price
 
     async def _liquidity_collapsed(self, pos: Position) -> bool:
         if self._fetcher is None:
@@ -141,6 +165,9 @@ class PositionMonitor:
         realized = (result.price - pos.entry_price) * tokens if result.price else 0.0
         pos.realized_pnl_sol += realized
         pos.token_amount = max(0.0, pos.token_amount - tokens)
+        # Reduce tracked exposure by the cost basis of the sold tokens so the
+        # exposure caps reflect capital actually still deployed.
+        pos.amount_sol = max(0.0, pos.amount_sol - tokens * pos.entry_price)
         pos.take_profit_hits += 1
         if pos.token_amount <= 0:
             pos.status = PositionStatus.CLOSED
