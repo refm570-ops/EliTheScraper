@@ -200,6 +200,15 @@ async def main() -> None:
             owner_user_id=os.getenv("TRADING_OWNER_USER_ID"),
         )
 
+    # Technical-analysis signal provider (chart structure for the evaluator).
+    # Optional: needs the `ta` extra (pandas/numpy). Degrades to None if absent.
+    try:
+        from skills.ta.analyzer import TAAnalyzer
+        ta_analyzer = TAAnalyzer()
+    except Exception:
+        ta_analyzer = None
+        log.info("main.ta_disabled", reason="ta extra not installed")
+
     trading_engine = TradingEngine(
         config=trading_config,
         safety_gate=safety_gate,
@@ -242,6 +251,7 @@ async def main() -> None:
         cross_ref=cross_ref,
         x_sentiment_analyzer=x_sentiment,
         trading_engine=trading_engine,
+        ta_analyzer=ta_analyzer,
     )
 
     # Periodic cleanup task (every 6 hours)

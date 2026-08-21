@@ -98,6 +98,7 @@ class OpportunityEvaluator:
                 "top10_holder_pct": opp.metadata.get("top10_holder_pct"),
             },
             "safety_soft_warnings": [f"{c.name}: {c.detail}" for c in safety.soft_failures],
+            "technical_analysis": opp.ta if opp.ta and opp.ta.get("available") else None,
             "max_trade_sol": max_trade_sol,
         }
 

@@ -29,6 +29,11 @@ trade = [
     "solders>=0.21",
     "base58>=2.1",
 ]
+# Technical-analysis signals (vendored tradingbot detectors).
+ta = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
 
 [tool.setuptools.packages.find]
 include = ["skills*", "agents*", "pipeline*", "storage*", "trading*"]

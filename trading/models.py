@@ -74,6 +74,7 @@ class Opportunity:
     social_metrics: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)   # TokenMetadataFetcher output
     source_reputation: float | None = None                   # 0..1, from discovery layer
+    ta: dict[str, Any] | None = None                         # TAAnalyzer signal (chart structure)
     created_at: float = field(default_factory=time.time)
 
     @property

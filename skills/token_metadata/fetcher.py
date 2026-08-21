@@ -14,6 +14,7 @@ log = structlog.get_logger()
 DEXSCREENER_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search"
 DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/{address}"
 BIRDEYE_TOKEN_OVERVIEW_URL = "https://public-api.birdeye.so/defi/token_overview"
+GECKOTERMINAL = "https://api.geckoterminal.com/api/v2"
 
 
 class TokenMetadataFetcher:
@@ -96,6 +97,40 @@ class TokenMetadataFetcher:
 
         await self._set_cached(cache_key, data)
         return data
+
+    async def fetch_ohlcv(
+        self, address: str, hours: int = 48, network: str = "solana"
+    ) -> list[dict[str, Any]]:
+        """Fetch recent hourly OHLCV candles for a mint via GeckoTerminal.
+
+        Best-effort: returns [] on any failure (used to compute TA signals, which
+        degrade to neutral when candles are unavailable). Candles are oldest-first
+        with keys: ts, price_usd (close), high, low, volume.
+        """
+        if not address:
+            return []
+        try:
+            pr = await self._http.get(f"{GECKOTERMINAL}/networks/{network}/tokens/{address}/pools")
+            pr.raise_for_status()
+            pools = pr.json().get("data") or []
+            if not pools:
+                return []
+            pool = pools[0]["attributes"]["address"]
+            cr = await self._http.get(
+                f"{GECKOTERMINAL}/networks/{network}/pools/{pool}/ohlcv/hour",
+                params={"aggregate": 1, "limit": hours},
+            )
+            cr.raise_for_status()
+            rows = (((cr.json().get("data") or {}).get("attributes") or {}).get("ohlcv_list")) or []
+        except Exception:
+            log.warning("token_metadata.ohlcv_error", address=address, exc_info=True)
+            return []
+        rows = sorted(rows, key=lambda x: x[0])  # oldest-first
+        return [
+            {"ts": int(x[0]), "price_usd": float(x[4]), "high": float(x[2]),
+             "low": float(x[3]), "volume": float(x[5])}
+            for x in rows
+        ]
 
     def _parse_pairs(self, pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Shared pair-normalization used by search and address lookups."""

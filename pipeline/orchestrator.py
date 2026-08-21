@@ -59,6 +59,7 @@ class Orchestrator:
         cross_ref: CrossReferenceAnalyst | None = None,
         x_sentiment_analyzer: XSentimentAnalyzer | None = None,
         trading_engine: TradingEngine | None = None,
+        ta_analyzer: Any = None,
         batch_size: int = 50,
         batch_interval: float = 300.0,  # 5 minutes
         heartbeat_interval: float = 60.0,
@@ -75,6 +76,7 @@ class Orchestrator:
         self._cross_ref = cross_ref
         self._x_sentiment_analyzer = x_sentiment_analyzer
         self._trading_engine = trading_engine
+        self._ta_analyzer = ta_analyzer
         self._batch_size = batch_size
         self._batch_interval = batch_interval
         self._heartbeat_interval = heartbeat_interval
@@ -391,12 +393,23 @@ class Orchestrator:
         else:
             venue = TokenVenue.UNKNOWN
 
+        # Technical-analysis signal (best-effort; chart structure for the
+        # evaluator). Never let a TA/fetch failure block a trade evaluation.
+        ta_signal = None
+        if self._ta_analyzer is not None and address:
+            try:
+                candles = await self._metadata_fetcher.fetch_ohlcv(address)
+                ta_signal = self._ta_analyzer.analyze(candles)
+            except Exception:
+                log.warning("orchestrator.ta_error", ticker=ticker, exc_info=True)
+
         opportunity = Opportunity(
             ticker=ticker,
             address=address,
             chain=chain,
             venue=venue,
             source=source,
+            ta=ta_signal,
             aggregator_score=float(score_result.get("total_score", 0) or 0),
             alert_level=alert_level,
             social_metrics=social_metrics,

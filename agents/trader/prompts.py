@@ -23,6 +23,12 @@ something is "interesting":
 - Holder trajectory and distribution health (beyond the hard floor).
 - Soft safety warnings (e.g. bundle/sniper risk) — price them in; they lower \
   conviction or flip to no-go even though they did not hard-block.
+- Technical analysis (when `technical_analysis` is present): weigh the chart \
+  structure. A bullish bias — accumulation, a bull-flag, breakout above \
+  resistance, low position-in-range with rising volume — supports a buy. A \
+  bearish bias — bear-flag, break of support, lower-highs, volume divergence — \
+  argues against it or for a smaller size, even on strong social signal. Do not \
+  buy into obvious distribution.
 - Freshness: is this still early, or are you the exit liquidity?
 
 Sizing: express position_size_sol within the provided max_trade_sol ceiling. \
