@@ -1,0 +1,117 @@
+# Trading / execution configuration for the autonomous buy agent.
+#
+# SAFETY FIRST: every value here is a guardrail. The system is designed to be
+# SAFE BY DEFAULT — paper trading, human approval, small caps. Loosen only once
+# you trust it. Env vars (see .env.example) override the master switches so you
+# can never accidentally ship a live-trading config to a repo.
+
+# ---------------------------------------------------------------------------
+# Master mode. Overridden by TRADING_MODE env var if set.
+#   paper    - simulate fills, never touches a wallet or the chain (DEFAULT)
+#   live     - real buys with real SOL (requires TRADING_ENABLED=true too)
+mode: paper
+
+# Autonomy. Overridden by TRADING_AUTONOMY env var.
+#   approval   - agent proposes, human confirms each buy via Telegram (DEFAULT)
+#   auto       - agent buys without asking (only honored in live mode when
+#                TRADING_ALLOW_AUTO=true; otherwise falls back to approval)
+autonomy: approval
+
+# ---------------------------------------------------------------------------
+# Risk limits — enforced in code (trading/risk.py), NOT just in prompts.
+risk:
+  # Hard ceiling on a single buy, in SOL. The evaluator may request less but
+  # never more; requests above this are clamped down.
+  max_trade_sol: 0.25
+  # Default size when the evaluator gives conviction but no explicit size.
+  default_trade_sol: 0.1
+  # Never hold more than this many open positions at once.
+  max_open_positions: 5
+  # Total SOL that may be deployed across all open positions simultaneously.
+  max_total_exposure_sol: 1.0
+  # Stop opening new positions once realized+unrealized loss for the UTC day
+  # reaches this many SOL (circuit breaker). Reset at UTC midnight.
+  daily_loss_limit_sol: 0.5
+  # Cap on SOL exposure attributable to a single discovery source, so one
+  # channel/wallet can't dominate the book.
+  max_exposure_per_source_sol: 0.4
+  # Minimum wallet balance (SOL) to keep as gas reserve; never spend below it.
+  min_gas_reserve_sol: 0.05
+
+# ---------------------------------------------------------------------------
+# Position sizing — maps evaluator conviction to a fraction of max_trade_sol.
+sizing:
+  conviction_fractions:
+    HIGH: 1.0
+    MEDIUM: 0.5
+    LOW: 0.25
+
+# ---------------------------------------------------------------------------
+# Execution parameters.
+execution:
+  # Slippage tolerance in basis points (100 = 1%). Evaluator may request tighter.
+  max_slippage_bps: 1000
+  # Priority fee (micro-lamports per compute unit) to land txs on Solana.
+  priority_fee_microlamports: 200000
+  # Use Jito bundles for MEV / frontrun protection when available.
+  use_jito: true
+  jito_tip_sol: 0.0005
+  # Which venue for which token state.
+  #   bonding  -> pump.fun bonding-curve tokens (PumpPortal trade API)
+  #   amm      -> graduated / standard SPL tokens (Jupiter aggregator)
+  venue_bonding: pumpportal
+  venue_amm: jupiter
+  # Transaction confirmation.
+  confirm_timeout_seconds: 60
+  confirm_retries: 3
+  # Reference SOL/USD price used ONLY to simulate fills in paper mode (converts
+  # DexScreener USD prices to SOL/token). Ignored in live mode, where real fills
+  # come from the swap itself. Override with SOL_USD_PRICE env if desired.
+  sol_usd_reference: 150.0
+  # Solana RPC endpoint for sends/confirmations (live) and safety reads.
+  # A paid RPC (Helius/Triton/QuickNode) is strongly recommended for live.
+  rpc_url: https://api.mainnet-beta.solana.com
+
+# ---------------------------------------------------------------------------
+# Exit policy — a buy agent needs a sell plan. Monitored by the position
+# tracker (trading/monitor.py). All percentages are of entry price.
+exit:
+  enabled: true
+  check_interval_seconds: 30
+  # Take-profit ladder: sell `portion` of the ORIGINAL position when price is
+  # up `gain_pct`. Portions should sum to <= 1.0; remainder rides the trailing.
+  take_profit_ladder:
+    - gain_pct: 100    # +100% (2x) -> take half off the table
+      portion: 0.5
+    - gain_pct: 300    # +300% (4x) -> take another 25%
+      portion: 0.25
+  # Hard stop-loss: dump the whole position if price falls this far.
+  stop_loss_pct: -40
+  # Trailing stop: once in profit, exit if price falls this far from its peak.
+  trailing_stop_pct: -25
+  # Time-based: force-close a position that hasn't hit any target after N hours.
+  max_hold_hours: 24
+
+# ---------------------------------------------------------------------------
+# Pre-trade safety gate thresholds (skills/safety). These HARD-BLOCK a buy.
+# The evaluator agent cannot override a hard fail.
+safety:
+  # Token contract requirements.
+  require_mint_authority_revoked: true
+  require_freeze_authority_revoked: true
+  # Liquidity pool: require LP burned or locked above this fraction.
+  require_lp_locked_or_burned: true
+  min_lp_locked_pct: 80
+  # Holder concentration: block if the top holder or top-10 exceed these.
+  max_top_holder_pct: 30
+  max_top10_holder_pct: 70
+  # Minimum on-chain liquidity (USD) — below this, exit is unreliable.
+  min_liquidity_usd: 5000
+  # Honeypot / sellability: require a passing sell simulation.
+  require_sellable: true
+  # Max buy/sell tax tolerated (percent).
+  max_tax_pct: 10
+  # Bundle / sniper detection: block if bundlers hold more than this percent.
+  max_bundled_pct: 40
+  # If a safety provider is unreachable, FAIL CLOSED (block the buy).
+  fail_closed: true

@@ -12,6 +12,7 @@ from storage.db import Database
 log = structlog.get_logger()
 
 DEXSCREENER_SEARCH_URL = "https://api.dexscreener.com/latest/dex/search"
+DEXSCREENER_TOKEN_URL = "https://api.dexscreener.com/latest/dex/tokens/{address}"
 BIRDEYE_TOKEN_OVERVIEW_URL = "https://public-api.birdeye.so/defi/token_overview"
 
 
@@ -62,6 +63,73 @@ class TokenMetadataFetcher:
         # Cache result
         await self._set_cached(normalized, data)
         return data
+
+    async def fetch_by_address(self, address: str) -> dict[str, Any] | None:
+        """Fetch metadata by contract/mint address (exact, avoids symbol collisions).
+
+        Used by the trading subsystem for exits and safety cross-checks, where a
+        specific mint — not a symbol — must be resolved. Address-keyed cache.
+        """
+        if not address:
+            return None
+        cache_key = f"addr:{address}"
+        cached = await self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            resp = await self._http.get(DEXSCREENER_TOKEN_URL.format(address=address))
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception:
+            log.warning("token_metadata.dexscreener_addr_error", address=address, exc_info=True)
+            return None
+
+        data = self._parse_pairs(body.get("pairs") or [])
+        if data is None:
+            return None
+
+        if self._birdeye_api_key and data.get("base_address"):
+            holder_data = await self._fetch_birdeye(data["base_address"])
+            if holder_data:
+                data.update(holder_data)
+
+        await self._set_cached(cache_key, data)
+        return data
+
+    def _parse_pairs(self, pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """Shared pair-normalization used by search and address lookups."""
+        if not pairs:
+            return None
+        best = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)
+        price_usd = best.get("priceUsd")
+        mcap = best.get("marketCap") or best.get("fdv")
+        liquidity = (best.get("liquidity") or {}).get("usd")
+        volume_24h = (best.get("volume") or {}).get("h24")
+        price_change_24h = (best.get("priceChange") or {}).get("h24")
+        pair_created = best.get("pairCreatedAt")
+        base_address = (best.get("baseToken") or {}).get("address")
+        pair_address = best.get("pairAddress")
+        chain = best.get("chainId")
+        dex_url = best.get("url")
+        age_days = None
+        if pair_created:
+            age_days = (time.time() - pair_created / 1000) / 86400
+        return {
+            "source": "dexscreener",
+            "price_usd": float(price_usd) if price_usd else None,
+            "market_cap": float(mcap) if mcap else None,
+            "liquidity_usd": float(liquidity) if liquidity else None,
+            "volume_24h": float(volume_24h) if volume_24h else None,
+            "price_change_24h": float(price_change_24h) if price_change_24h else None,
+            "age_days": round(age_days, 1) if age_days else None,
+            "base_address": base_address,
+            "pair_address": pair_address,
+            "chain": chain,
+            "dex_url": dex_url,
+            "holder_count": None,
+            "top10_holder_pct": None,
+        }
 
     async def _fetch_dexscreener(self, query: str) -> dict[str, Any] | None:
         """Search DexScreener for token data."""
