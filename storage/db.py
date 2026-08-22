@@ -43,6 +43,49 @@ CREATE TABLE IF NOT EXISTS alert_log (
 );
 CREATE INDEX IF NOT EXISTS idx_alert_log_ticker_time
     ON alert_log(ticker, created_at);
+
+-- Trading subsystem -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS positions (
+    id TEXT PRIMARY KEY,
+    address TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    chain TEXT NOT NULL,
+    venue TEXT NOT NULL,
+    source TEXT NOT NULL,
+    entry_price REAL NOT NULL,          -- SOL per token
+    amount_sol REAL NOT NULL,           -- SOL deployed at entry
+    token_amount REAL NOT NULL,         -- tokens currently held
+    initial_token_amount REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    is_paper INTEGER NOT NULL DEFAULT 1,
+    entry_tx TEXT,
+    peak_price REAL,
+    realized_pnl_sol REAL NOT NULL DEFAULT 0,
+    take_profit_hits INTEGER NOT NULL DEFAULT 0,
+    opened_at REAL NOT NULL,
+    closed_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status);
+CREATE INDEX IF NOT EXISTS idx_positions_source ON positions(source, status);
+
+-- Append-only audit of every buy/sell attempt (the financial equivalent of
+-- alert_log). Never updated after insert.
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id TEXT,
+    address TEXT NOT NULL,
+    ticker TEXT NOT NULL,
+    side TEXT NOT NULL,                 -- BUY | SELL
+    sol_amount REAL,
+    token_amount REAL,
+    price REAL,
+    tx_signature TEXT,
+    status TEXT NOT NULL,               -- success | failed
+    is_paper INTEGER NOT NULL DEFAULT 1,
+    error TEXT,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_trades_time ON trades(created_at);
 """
 
 

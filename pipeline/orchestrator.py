@@ -20,8 +20,13 @@ from skills.social_metrics.counter import SocialMetricsCounter
 from skills.token_metadata.fetcher import TokenMetadataFetcher
 from storage.alert_log import AlertLog
 from storage.ticker_store import TickerStore
+from trading.engine import TradingEngine
+from trading.models import Chain, Opportunity, TokenVenue
 
 log = structlog.get_logger()
+
+# Alert levels that are eligible for an autonomous buy evaluation.
+BUY_GRADE_LEVELS = ("act_now", "interesting")
 
 
 class Orchestrator:
@@ -53,6 +58,8 @@ class Orchestrator:
         aggregator: SignalAggregator,
         cross_ref: CrossReferenceAnalyst | None = None,
         x_sentiment_analyzer: XSentimentAnalyzer | None = None,
+        trading_engine: TradingEngine | None = None,
+        ta_analyzer: Any = None,
         batch_size: int = 50,
         batch_interval: float = 300.0,  # 5 minutes
         heartbeat_interval: float = 60.0,
@@ -68,6 +75,8 @@ class Orchestrator:
         self._aggregator = aggregator
         self._cross_ref = cross_ref
         self._x_sentiment_analyzer = x_sentiment_analyzer
+        self._trading_engine = trading_engine
+        self._ta_analyzer = ta_analyzer
         self._batch_size = batch_size
         self._batch_interval = batch_interval
         self._heartbeat_interval = heartbeat_interval
@@ -306,6 +315,17 @@ class Orchestrator:
             log.debug("orchestrator.ticker_suppressed", ticker=ticker)
             return 0
 
+        # Trading hook: for buy-grade opportunities, hand off to the trading
+        # engine (safety → evaluate → risk → approve/execute). Wrapped so a
+        # trading error can never break the alert path.
+        if self._trading_engine is not None and alert_level in BUY_GRADE_LEVELS:
+            try:
+                await self._maybe_trade(
+                    ticker, metadata, social_metrics, score_result, alert_level
+                )
+            except Exception:
+                log.error("orchestrator.trade_hook_error", ticker=ticker, exc_info=True)
+
         # Format rich alert
         text = format_phase2_alert(
             ticker=ticker,
@@ -337,6 +357,65 @@ class Orchestrator:
             groups=social_metrics.get("unique_groups"),
         )
         return 1
+
+    async def _maybe_trade(
+        self,
+        ticker: str,
+        metadata: dict[str, Any] | None,
+        social_metrics: dict[str, Any],
+        score_result: dict[str, Any],
+        alert_level: str,
+    ) -> None:
+        """Build an Opportunity from the enriched signal and hand it to the
+        trading engine. The engine applies the safety gate, evaluator, and risk
+        limits — this method only assembles the input.
+        """
+        metadata = metadata or {}
+        address = metadata.get("base_address")
+        chain_str = (metadata.get("chain") or "solana").lower()
+        try:
+            chain = Chain(chain_str)
+        except ValueError:
+            chain = Chain.UNKNOWN
+
+        sources = social_metrics.get("sources") or []
+        source = sources[0] if len(sources) == 1 else ("mixed" if sources else "telegram")
+
+        # Venue routing: pump.fun bonding-curve tokens (dexId "pumpfun", pre-
+        # graduation) must go to PumpPortal, not Jupiter. Graduated/AMM tokens
+        # route to Jupiter. Unknown → executor defaults to Jupiter.
+        dex_id = str(metadata.get("dex_id") or "").lower()
+        labels = [str(x).lower() for x in (metadata.get("labels") or [])]
+        if "pump" in dex_id or any("bonding" in x for x in labels):
+            venue = TokenVenue.BONDING
+        elif dex_id:
+            venue = TokenVenue.AMM
+        else:
+            venue = TokenVenue.UNKNOWN
+
+        # Technical-analysis signal (best-effort; chart structure for the
+        # evaluator). Never let a TA/fetch failure block a trade evaluation.
+        ta_signal = None
+        if self._ta_analyzer is not None and address:
+            try:
+                candles = await self._metadata_fetcher.fetch_ohlcv(address)
+                ta_signal = self._ta_analyzer.analyze(candles)
+            except Exception:
+                log.warning("orchestrator.ta_error", ticker=ticker, exc_info=True)
+
+        opportunity = Opportunity(
+            ticker=ticker,
+            address=address,
+            chain=chain,
+            venue=venue,
+            source=source,
+            ta=ta_signal,
+            aggregator_score=float(score_result.get("total_score", 0) or 0),
+            alert_level=alert_level,
+            social_metrics=social_metrics,
+            metadata=metadata,
+        )
+        await self._trading_engine.handle_opportunity(opportunity)
 
     async def _drain(self) -> None:
         """Drain any remaining messages on shutdown."""

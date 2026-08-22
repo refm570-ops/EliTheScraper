@@ -24,9 +24,19 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
 ]
+# Live Solana execution. Not needed for paper trading (the default).
+trade = [
+    "solders>=0.21",
+    "base58>=2.1",
+]
+# Technical-analysis signals (vendored tradingbot detectors).
+ta = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+]
 
 [tool.setuptools.packages.find]
-include = ["skills*", "agents*", "pipeline*", "storage*"]
+include = ["skills*", "agents*", "pipeline*", "storage*", "trading*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

@@ -26,6 +26,15 @@ from skills.x_puller.puller import XFeedPuller
 from storage.alert_log import AlertLog
 from storage.db import Database
 from storage.ticker_store import TickerStore
+from storage.trade_store import TradeStore
+from agents.trader.agent import OpportunityEvaluator
+from skills.approval.gate import ApprovalGate
+from skills.executor.paper import PaperExecutor
+from skills.safety.gate import SafetyGate
+from trading.config import load_trading_config
+from trading.engine import TradingEngine
+from trading.monitor import PositionMonitor
+from trading.risk import RiskManager
 
 # Configure structlog for JSON output
 structlog.configure(
@@ -139,6 +148,95 @@ async def main() -> None:
         chat_id=config["TG_ALERT_CHAT_ID"],
     )
 
+    # ---- Trading subsystem (autonomous buy agent) -------------------------
+    trading_config = load_trading_config()
+    trade_store = TradeStore(db=db)
+
+    # Executor: paper (default) or live Solana. Live requires the `trade` extra
+    # and TRADER_WALLET_SECRET, and is only active when mode=live AND
+    # TRADING_ENABLED=true (see trading/config.py).
+    if trading_config.is_live:
+        from skills.executor.solana import SolanaExecutor
+        from skills.executor.wallet import Wallet
+
+        wallet = Wallet(secret_base58=os.getenv("TRADER_WALLET_SECRET", ""))
+        exec_cfg = trading_config.execution
+        executor = SolanaExecutor(
+            wallet=wallet,
+            rpc_url=exec_cfg.get("rpc_url", "https://api.mainnet-beta.solana.com"),
+            priority_fee_microlamports=int(exec_cfg.get("priority_fee_microlamports", 200000)),
+            use_jito=bool(exec_cfg.get("use_jito", True)),
+            jito_tip_sol=float(exec_cfg.get("jito_tip_sol", 0.0005)),
+            confirm_timeout_seconds=float(exec_cfg.get("confirm_timeout_seconds", 60)),
+            confirm_retries=int(exec_cfg.get("confirm_retries", 3)),
+            min_gas_reserve_sol=float(trading_config.risk.get("min_gas_reserve_sol", 0.05)),
+        )
+        log.warning("main.LIVE_TRADING_ENABLED", pubkey=wallet.pubkey)
+    else:
+        sol_usd = float(os.getenv("SOL_USD_PRICE", trading_config.execution.get("sol_usd_reference", 150.0)))
+        executor = PaperExecutor(fetcher=metadata_fetcher, sol_usd_reference=sol_usd)
+        log.info("main.paper_trading", mode=trading_config.mode)
+
+    # Decide the RPC client first, then build the gate ONCE (avoids leaking the
+    # httpx clients of a throwaway instance).
+    rpc_client = None
+    if os.getenv("SOLANA_RPC_URL"):
+        from skills.safety.providers import SolanaRPC
+        rpc_client = SolanaRPC(rpc_url=os.getenv("SOLANA_RPC_URL"))
+    safety_gate = SafetyGate(safety_config=trading_config.safety, rpc=rpc_client)
+
+    evaluator = OpportunityEvaluator(api_key=api_key)
+    risk_manager = RiskManager(config=trading_config, trade_store=trade_store, redis=redis)
+
+    async def trade_notifier(text: str, mode: str = "normal") -> None:
+        await dispatcher.enqueue(text, mode)
+
+    # Approval gate only when human approval is required (not auto).
+    approval_gate: ApprovalGate | None = None
+    if not trading_config.is_auto:
+        approval_gate = ApprovalGate(
+            bot_token=config["TG_ALERT_BOT_TOKEN"],
+            owner_chat_id=config["TG_ALERT_CHAT_ID"],
+            owner_user_id=os.getenv("TRADING_OWNER_USER_ID"),
+        )
+
+    # Technical-analysis signal provider (chart structure for the evaluator).
+    # Optional: needs the `ta` extra (pandas/numpy). Degrades to None if absent.
+    try:
+        from skills.ta.analyzer import TAAnalyzer
+        ta_analyzer = TAAnalyzer()
+    except Exception:
+        ta_analyzer = None
+        log.info("main.ta_disabled", reason="ta extra not installed")
+
+    trading_engine = TradingEngine(
+        config=trading_config,
+        safety_gate=safety_gate,
+        evaluator=evaluator,
+        risk_manager=risk_manager,
+        executor=executor,
+        trade_store=trade_store,
+        approval_gate=approval_gate,
+        notifier=trade_notifier,
+    )
+
+    # Position monitor (exits) — runs on a periodic task.
+    position_monitor = PositionMonitor(
+        trade_store=trade_store,
+        executor=executor,
+        exit_config=trading_config.exit,
+        execution_config=trading_config.execution,
+        fetcher=metadata_fetcher,
+        min_liquidity_usd=float(trading_config.safety.get("min_liquidity_usd", 5000)),
+        risk_manager=risk_manager,
+        daily_loss_limit_sol=float(trading_config.risk.get("daily_loss_limit_sol", 0.5)),
+    )
+    monitor_task = PeriodicTask(
+        name="position_monitor",
+        func=position_monitor.tick,
+        interval_seconds=float(trading_config.exit.get("check_interval_seconds", 30)),
+    )
+
     # Orchestrator
     orchestrator = Orchestrator(
         buffer=MessageBuffer(redis=redis),
@@ -152,6 +250,8 @@ async def main() -> None:
         aggregator=aggregator,
         cross_ref=cross_ref,
         x_sentiment_analyzer=x_sentiment,
+        trading_engine=trading_engine,
+        ta_analyzer=ta_analyzer,
     )
 
     # Periodic cleanup task (every 6 hours)
@@ -164,6 +264,9 @@ async def main() -> None:
     # Start components
     await dispatcher.start()
     cleanup_task.start()
+    monitor_task.start()
+    if approval_gate is not None:
+        await approval_gate.start()
     if x_poll_task:
         x_poll_task.start()
 
@@ -201,7 +304,12 @@ async def main() -> None:
     if x_puller:
         await x_puller.close()
     await cleanup_task.stop()
+    await monitor_task.stop()
+    if approval_gate is not None:
+        await approval_gate.stop()
     await dispatcher.stop()
+    await executor.close()
+    await safety_gate.close()
     await metadata_fetcher.close()
     await db.close()
     await redis.aclose()
