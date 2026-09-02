@@ -398,7 +398,9 @@ class Orchestrator:
         ta_signal = None
         if self._ta_analyzer is not None and address:
             try:
-                candles = await self._metadata_fetcher.fetch_ohlcv(address)
+                candles = await self._metadata_fetcher.fetch_ohlcv(
+                    address, network=chain_str
+                )
                 ta_signal = self._ta_analyzer.analyze(candles)
             except Exception:
                 log.warning("orchestrator.ta_error", ticker=ticker, exc_info=True)

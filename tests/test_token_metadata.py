@@ -161,3 +161,172 @@ async def test_ticker_normalization(
         result = await fetcher.fetch("MONKE")
 
     assert result is not None
+
+
+def _pair(chain: str, liquidity: float, address: str) -> dict:
+    return {
+        "chainId": chain,
+        "dexId": "uniswap",
+        "url": f"https://dexscreener.com/{chain}/{address}",
+        "pairAddress": f"pair-{chain}",
+        "baseToken": {"address": address, "symbol": "GME"},
+        "priceUsd": "1.0",
+        "marketCap": 1000,
+        "liquidity": {"usd": liquidity},
+        "volume": {"h24": 100},
+        "priceChange": {"h24": 1.0},
+        "pairCreatedAt": 1700000000000,
+    }
+
+
+@pytest.fixture
+def multichain_response():
+    """One ticker on three chains — these are the real liquidity figures
+    DexScreener returns for $GME, where Ethereum is 13x deeper than Robinhood."""
+    return {
+        "pairs": [
+            _pair("ethereum", 3_699_511, "0xeth"),
+            _pair("bsc", 1_496_309, "0xbsc"),
+            _pair("robinhood", 282_464, "0xrh"),
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_preferred_chain_wins_over_deeper_liquidity(
+    db, multichain_response: dict
+) -> None:
+    """A ticker shilled on Robinhood Chain must not resolve to the Ethereum
+    token just because Ethereum's pool is deeper."""
+    f = TokenMetadataFetcher(db=db, preferred_chains=["robinhood"])
+    with patch.object(
+        f._http,
+        "get",
+        new_callable=AsyncMock,
+        return_value=MockHTTPResponse(multichain_response),
+    ):
+        result = await f.fetch("$GME")
+    await f.close()
+
+    assert result is not None
+    assert result["chain"] == "robinhood"
+    assert result["liquidity_usd"] == 282_464
+    assert result["base_address"] == "0xrh"
+
+
+@pytest.mark.asyncio
+async def test_preferred_chain_order_is_not_a_priority_list(
+    db, multichain_response: dict
+) -> None:
+    """Every preferred chain ranks equally; liquidity breaks the tie among them."""
+    f = TokenMetadataFetcher(db=db, preferred_chains=["robinhood", "bsc"])
+    with patch.object(
+        f._http,
+        "get",
+        new_callable=AsyncMock,
+        return_value=MockHTTPResponse(multichain_response),
+    ):
+        result = await f.fetch("$GME")
+    await f.close()
+
+    assert result["chain"] == "bsc"
+
+
+@pytest.mark.asyncio
+async def test_falls_back_to_liquidity_when_no_pair_on_preferred_chain(
+    db, multichain_response: dict
+) -> None:
+    """Preference is a preference, not a filter — an unrelated token still
+    resolves rather than vanishing from the pipeline."""
+    f = TokenMetadataFetcher(db=db, preferred_chains=["arbitrum"])
+    with patch.object(
+        f._http,
+        "get",
+        new_callable=AsyncMock,
+        return_value=MockHTTPResponse(multichain_response),
+    ):
+        result = await f.fetch("$GME")
+    await f.close()
+
+    assert result["chain"] == "ethereum"
+
+
+@pytest.mark.asyncio
+async def test_no_preference_keeps_highest_liquidity(
+    db, multichain_response: dict
+) -> None:
+    """Unconfigured behavior is unchanged from before chain preference existed."""
+    f = TokenMetadataFetcher(db=db)
+    with patch.object(
+        f._http,
+        "get",
+        new_callable=AsyncMock,
+        return_value=MockHTTPResponse(multichain_response),
+    ):
+        result = await f.fetch("$GME")
+    await f.close()
+
+    assert result["chain"] == "ethereum"
+    assert result["liquidity_usd"] == 3_699_511
+
+
+@pytest.mark.asyncio
+async def test_birdeye_skipped_for_non_solana_chain(
+    db, multichain_response: dict
+) -> None:
+    """Birdeye is queried with x-chain: solana, so calling it with an EVM
+    address burns a request and returns holder data for the wrong token."""
+    f = TokenMetadataFetcher(
+        db=db, birdeye_api_key="test-key", preferred_chains=["robinhood"]
+    )
+    mock = AsyncMock(return_value=MockHTTPResponse(multichain_response))
+    with patch.object(f._http, "get", mock):
+        result = await f.fetch("$GME")
+    await f.close()
+
+    assert result["chain"] == "robinhood"
+    assert result["holder_count"] is None
+    assert mock.call_count == 1  # DexScreener only — Birdeye never called
+
+
+@pytest.mark.asyncio
+async def test_ohlcv_queries_the_requested_network(db) -> None:
+    """TA candles must come from the chain the token lives on. Querying
+    GeckoTerminal's solana network with an EVM address returns nothing and
+    silently degrades the TA signal to neutral."""
+    f = TokenMetadataFetcher(db=db)
+    urls: list[str] = []
+
+    async def mock_get(url, **kwargs):
+        urls.append(url)
+        if url.endswith("/pools"):
+            return MockHTTPResponse({"data": [{"attributes": {"address": "pool1"}}]})
+        return MockHTTPResponse(
+            {"data": {"attributes": {"ohlcv_list": [[1700000000, 1, 2, 0.5, 1.5, 100]]}}}
+        )
+
+    with patch.object(f._http, "get", side_effect=mock_get):
+        candles = await f.fetch_ohlcv("0xrh", network="robinhood")
+    await f.close()
+
+    assert urls and all("/networks/robinhood/" in u for u in urls)
+    assert candles == [
+        {"ts": 1700000000, "price_usd": 1.5, "high": 2.0, "low": 0.5, "volume": 100.0}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ohlcv_defaults_to_solana_when_network_unspecified(db) -> None:
+    """Callers that predate the network parameter keep working."""
+    f = TokenMetadataFetcher(db=db)
+    urls: list[str] = []
+
+    async def mock_get(url, **kwargs):
+        urls.append(url)
+        return MockHTTPResponse({"data": []})
+
+    with patch.object(f._http, "get", side_effect=mock_get):
+        await f.fetch_ohlcv("So111")
+    await f.close()
+
+    assert urls and all("/networks/solana/" in u for u in urls)

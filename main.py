@@ -74,6 +74,10 @@ def load_config() -> dict[str, str]:
     config["CACHE_TTL_SECONDS"] = os.getenv("CACHE_TTL_SECONDS", "300")
     config["BIRDEYE_API_KEY"] = os.getenv("BIRDEYE_API_KEY", "")
     config["X_BEARER_TOKEN"] = os.getenv("X_BEARER_TOKEN", "")
+    # Comma-separated chain ids (DexScreener chainId values, e.g.
+    # "robinhood,solana"). A ticker found on several chains resolves to the
+    # first chain listed here that has a pair, before liquidity is considered.
+    config["PREFERRED_CHAINS"] = os.getenv("PREFERRED_CHAINS", "")
 
     if missing:
         raise RuntimeError(f"Missing required env vars: {', '.join(missing)}")
@@ -115,6 +119,7 @@ async def main() -> None:
         db=db,
         birdeye_api_key=config["BIRDEYE_API_KEY"] or None,
         cache_ttl_seconds=float(config["CACHE_TTL_SECONDS"]),
+        preferred_chains=config["PREFERRED_CHAINS"].split(","),
     )
     social_counter = SocialMetricsCounter(ticker_store=ticker_store)
 

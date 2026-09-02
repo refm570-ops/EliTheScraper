@@ -30,10 +30,14 @@ class TokenMetadataFetcher:
         db: Database,
         birdeye_api_key: str | None = None,
         cache_ttl_seconds: float = 300.0,
+        preferred_chains: list[str] | None = None,
     ) -> None:
         self._db = db
         self._birdeye_api_key = birdeye_api_key
         self._cache_ttl = cache_ttl_seconds
+        self._preferred_chains = {
+            c.strip().lower() for c in (preferred_chains or []) if c.strip()
+        }
         self._http = httpx.AsyncClient(timeout=10.0)
 
     async def close(self) -> None:
@@ -54,10 +58,8 @@ class TokenMetadataFetcher:
             return None
 
         # Enrich with Birdeye holder data if we have a Solana address
-        pair_address = data.get("pair_address")
-        base_address = data.get("base_address")
-        if self._birdeye_api_key and base_address:
-            holder_data = await self._fetch_birdeye(base_address)
+        if self._birdeye_supported(data):
+            holder_data = await self._fetch_birdeye(data["base_address"])
             if holder_data:
                 data.update(holder_data)
 
@@ -90,7 +92,7 @@ class TokenMetadataFetcher:
         if data is None:
             return None
 
-        if self._birdeye_api_key and data.get("base_address"):
+        if self._birdeye_supported(data):
             holder_data = await self._fetch_birdeye(data["base_address"])
             if holder_data:
                 data.update(holder_data)
@@ -99,9 +101,13 @@ class TokenMetadataFetcher:
         return data
 
     async def fetch_ohlcv(
-        self, address: str, hours: int = 48, network: str = "solana"
+        self, address: str, hours: int = 48, network: str | None = None
     ) -> list[dict[str, Any]]:
-        """Fetch recent hourly OHLCV candles for a mint via GeckoTerminal.
+        """Fetch recent hourly OHLCV candles for a token via GeckoTerminal.
+
+        `network` is a GeckoTerminal network id and must match the chain the
+        address lives on — pass metadata["chain"] through. Defaulting it here
+        would silently query the wrong chain and return no candles.
 
         Best-effort: returns [] on any failure (used to compute TA signals, which
         degrade to neutral when candles are unavailable). Candles are oldest-first
@@ -109,6 +115,7 @@ class TokenMetadataFetcher:
         """
         if not address:
             return []
+        network = (network or "solana").lower()
         try:
             pr = await self._http.get(f"{GECKOTERMINAL}/networks/{network}/tokens/{address}/pools")
             pr.raise_for_status()
@@ -123,7 +130,9 @@ class TokenMetadataFetcher:
             cr.raise_for_status()
             rows = (((cr.json().get("data") or {}).get("attributes") or {}).get("ohlcv_list")) or []
         except Exception:
-            log.warning("token_metadata.ohlcv_error", address=address, exc_info=True)
+            log.warning(
+                "token_metadata.ohlcv_error", address=address, network=network, exc_info=True
+            )
             return []
         rows = sorted(rows, key=lambda x: x[0])  # oldest-first
         return [
@@ -132,11 +141,49 @@ class TokenMetadataFetcher:
             for x in rows
         ]
 
-    def _parse_pairs(self, pairs: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """Shared pair-normalization used by search and address lookups."""
+    def _pair_rank(self, pair: dict[str, Any]) -> tuple[int, float]:
+        """Rank a pair: preferred chain first, then liquidity.
+
+        With no preferred chains configured every pair scores 0 on the first
+        element, so selection degrades to plain highest-liquidity.
+        """
+        chain = str(pair.get("chainId") or "").lower()
+        liquidity = (pair.get("liquidity") or {}).get("usd") or 0
+        return (1 if chain in self._preferred_chains else 0, float(liquidity))
+
+    def _birdeye_supported(self, data: dict[str, Any]) -> bool:
+        """Birdeye is queried with `x-chain: solana`, so only Solana addresses
+        return meaningful holder data. Anything else is a wasted call whose
+        response would poison the whale-dominance inputs."""
+        return (
+            bool(self._birdeye_api_key)
+            and bool(data.get("base_address"))
+            and str(data.get("chain") or "").lower() == "solana"
+        )
+
+    def _parse_pairs(
+        self, pairs: list[dict[str, Any]], query: str | None = None
+    ) -> dict[str, Any] | None:
+        """Shared pair-normalization used by search and address lookups.
+
+        A ticker can exist on many chains; picking purely by liquidity resolves
+        it to whichever chain happens to be deepest, which is not necessarily
+        the one being traded. Preferred chains win before liquidity is
+        considered.
+        """
         if not pairs:
             return None
-        best = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)
+        best = max(pairs, key=self._pair_rank)
+        if (
+            self._preferred_chains
+            and str(best.get("chainId") or "").lower() not in self._preferred_chains
+        ):
+            log.debug(
+                "token_metadata.no_pair_on_preferred_chain",
+                query=query,
+                resolved_chain=best.get("chainId"),
+                preferred=sorted(self._preferred_chains),
+            )
         price_usd = best.get("priceUsd")
         mcap = best.get("marketCap") or best.get("fdv")
         liquidity = (best.get("liquidity") or {}).get("usd")
@@ -185,41 +232,7 @@ class TokenMetadataFetcher:
             log.debug("token_metadata.dexscreener_no_pairs", query=query)
             return None
 
-        # Pick the highest-liquidity pair
-        best = max(pairs, key=lambda p: (p.get("liquidity") or {}).get("usd") or 0)
-
-        price_usd = best.get("priceUsd")
-        mcap = best.get("marketCap") or best.get("fdv")
-        liquidity = (best.get("liquidity") or {}).get("usd")
-        volume_24h = (best.get("volume") or {}).get("h24")
-        price_change_24h = (best.get("priceChange") or {}).get("h24")
-        pair_created = best.get("pairCreatedAt")  # ms epoch
-        base_address = (best.get("baseToken") or {}).get("address")
-        pair_address = best.get("pairAddress")
-        chain = best.get("chainId")
-        dex_url = best.get("url")
-
-        age_days = None
-        if pair_created:
-            age_days = (time.time() - pair_created / 1000) / 86400
-
-        return {
-            "source": "dexscreener",
-            "price_usd": float(price_usd) if price_usd else None,
-            "market_cap": float(mcap) if mcap else None,
-            "liquidity_usd": float(liquidity) if liquidity else None,
-            "volume_24h": float(volume_24h) if volume_24h else None,
-            "price_change_24h": float(price_change_24h) if price_change_24h else None,
-            "age_days": round(age_days, 1) if age_days else None,
-            "base_address": base_address,
-            "pair_address": pair_address,
-            "chain": chain,
-            "dex_id": best.get("dexId"),
-            "labels": best.get("labels") or [],
-            "dex_url": dex_url,
-            "holder_count": None,
-            "top10_holder_pct": None,
-        }
+        return self._parse_pairs(pairs, query=query)
 
     async def _fetch_birdeye(self, token_address: str) -> dict[str, Any] | None:
         """Fetch holder data from Birdeye."""
