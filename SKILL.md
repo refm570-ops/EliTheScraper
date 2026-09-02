@@ -1,9 +1,9 @@
 ---
-name: crypto-alpha-signals
+name: urim
 description: Multi-agent system for extracting, classifying, scoring, and alerting on crypto token signals from Telegram groups and Twitter/X feeds. Combines real-time message ingestion, LLM-powered classification, on-chain data enrichment, cross-platform correlation, and automated alerting via Telegram bot.
 ---
 
-# Crypto Alpha Signal System
+# Urim — Crypto Alpha Signal System
 
 ## Overview
 
@@ -32,7 +32,7 @@ DATA SKILLS (deterministic) → AGENTS (LLM-powered) → OUTPUT SKILLS (determin
 ## Directory Structure
 
 ```
-crypto-alpha-system/
+urim/
 ├── SKILL.md
 ├── .env.example
 ├── docker-compose.yml
